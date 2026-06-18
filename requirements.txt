@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+redis
+python-jose[cryptography]
+werkzeug
+pydantic-settings
+alembic
