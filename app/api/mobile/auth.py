@@ -10,7 +10,8 @@ from app.models import User, RegisterRequest as RegisterRequestModel, Driver
 from app.schemas.auth import (
     CheckStatusRequest, OTPSendRequest, OTPVerifyRequest,
     DriverLicenseRequest, RegisterRequest, MobileLoginRequest,
-    DeleteRegisterRequest
+    DeleteRegisterRequest, ProfilePhoneVerifyRequest,
+    EmailSendRequest, EmailVerifyRequest
 )
 from config import settings
 
@@ -121,7 +122,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
             {"sub": str(user.id), "tax_id": user.tax_id, "device_id": body.device},
             exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
         )
-        return {"success": True, "data": {"token": token, "user": {"tax_id": user.tax_id, "name": user.name}}}
+        return {"success": True, "data": {"token": token, "user": {"tax_id": user.tax_id, "name": user.name, "phone": user.phone, "email": user.email}}}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail={"error": str(e)})
@@ -142,7 +143,7 @@ def login(body: MobileLoginRequest, db: Session = Depends(get_db)):
         {"sub": str(user.id), "tax_id": user.tax_id, "device_id": body.device},
         exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
     )
-    return {"success": True, "data": {"token": token, "user": {"name": user.name, "tax_id": user.tax_id}}}
+    return {"success": True, "data": {"token": token, "user": {"name": user.name, "tax_id": user.tax_id, "phone": user.phone, "email": user.email}}}
 
 
 @router.post("/session/restore")
@@ -150,7 +151,8 @@ def restore_session(current_user: User = Depends(get_current_user)):
     return {"success": True, "data": {"user": {
         "tax_id": current_user.tax_id,
         "name": current_user.name,
-        "phone": current_user.phone
+        "phone": current_user.phone,
+        "email": current_user.email
     }}}
 
 @router.delete("/register-request")
@@ -163,3 +165,62 @@ def delete_registration_request(body: DeleteRegisterRequest, db: Session = Depen
     db.commit()
     
     return {"success": True}
+
+
+@router.post("/profile/phone/verify")
+def verify_profile_phone(body: ProfilePhoneVerifyRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stored = redis_client.get(f"otp:{current_user.tax_id}")
+    if not stored:
+        raise HTTPException(status_code=400, detail={"code": "OTP_EXPIRED", "message": "Código expirou ou não foi gerado."})
+
+    stored_json = json.loads(stored)
+    if stored_json["phone"] != body.phone:
+        raise HTTPException(status_code=400, detail={"code": "PHONE_MISMATCH", "message": "Telefone não corresponde ao código gerado."})
+    if str(stored_json["code"]) != body.code:
+        raise HTTPException(status_code=400, detail={"code": "PHONE_VALIDATION_CODE_INVALID", "message": "Código inválido."})
+
+    current_user.phone = body.phone
+    db.commit()
+    redis_client.delete(f"otp:{current_user.tax_id}")
+    return {"success": True, "data": {"user": {
+        "tax_id": current_user.tax_id,
+        "name": current_user.name,
+        "phone": current_user.phone,
+        "email": current_user.email
+    }}}
+
+
+@router.post("/profile/email/send-code")
+def send_email_code(body: EmailSendRequest, current_user: User = Depends(get_current_user)):
+    code = random.randint(1000, 9999)
+    redis_client.setex(f"otp_email:{current_user.tax_id}", 300, json.dumps({"code": code, "email": body.email}))
+    print(f"DEBUG OTP EMAIL {current_user.tax_id}: {code}")
+    return {"success": True}
+
+
+@router.post("/profile/email/verify")
+def verify_profile_email(body: EmailVerifyRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stored = redis_client.get(f"otp_email:{current_user.tax_id}")
+    if not stored:
+        raise HTTPException(status_code=400, detail={"code": "OTP_EXPIRED", "message": "Código expirou ou não foi gerado."})
+
+    stored_json = json.loads(stored)
+    if stored_json["email"] != body.email:
+        raise HTTPException(status_code=400, detail={"code": "EMAIL_MISMATCH", "message": "E-mail não corresponde ao código gerado."})
+    if str(stored_json["code"]) != body.code:
+        raise HTTPException(status_code=400, detail={"code": "EMAIL_VALIDATION_CODE_INVALID", "message": "Código inválido."})
+
+    # Check if email is already taken by another user
+    existing_user = db.query(User).filter(User.email == body.email, User.id != current_user.id).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail={"code": "EMAIL_ALREADY_TAKEN", "message": "Este e-mail já está cadastrado em outra conta."})
+
+    current_user.email = body.email
+    db.commit()
+    redis_client.delete(f"otp_email:{current_user.tax_id}")
+    return {"success": True, "data": {"user": {
+        "tax_id": current_user.tax_id,
+        "name": current_user.name,
+        "phone": current_user.phone,
+        "email": current_user.email
+    }}}

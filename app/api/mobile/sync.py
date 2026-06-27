@@ -97,17 +97,17 @@ def get_activities(
     appt_layouts_dict = {}
     for l in appt_layouts:
         if (l.terminal_id, l.ref) in appt_layout_refs:
-            appt_layouts_dict.setdefault(str(l.terminal_id), {})[l.ref] = {"title": l.title, "layout": l.layout}
+            appt_layouts_dict[f"{l.terminal_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     ticket_layouts_dict = {}
     for l in ticket_layouts:
         if (l.terminal_id, l.ref) in ticket_layout_refs:
-            ticket_layouts_dict.setdefault(str(l.terminal_id), {})[l.ref] = {"title": l.title, "layout": l.layout}
+            ticket_layouts_dict[f"{l.terminal_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     trip_layouts_dict = {}
     for l in trip_layouts:
         if (l.trucking_company_id, l.ref) in trip_layout_refs:
-            trip_layouts_dict.setdefault(str(l.trucking_company_id), {})[l.ref] = {"title": l.title, "layout": l.layout}
+            trip_layouts_dict[f"{l.trucking_company_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     # 6. Formatação dos Dados (Mantendo a estrutura normalizada para o Redux)
     # 6. Formatação dos Dados
@@ -164,6 +164,7 @@ def get_activities(
             ],
             "terminals": {
                 str(term.id): {
+                    "id": str(term.id),
                     "name": term.name,
                     "use_remote_checkin": term.use_remote_checkin,
                     "address": {
@@ -171,7 +172,8 @@ def get_activities(
                         "city": term.address_city,
                         "lat": term.address_lat,
                         "lng": term.address_lng,
-                    }
+                    },
+                    "geofence": term.geofence if (term.use_remote_checkin and term.geofence) else None,
                 } for term in terminals
             },
             "trucking_companies": {

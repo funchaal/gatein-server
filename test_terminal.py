@@ -51,7 +51,7 @@ if __name__ == '__main__':
     sio.connect(
         'http://127.0.0.1:8000',
         namespaces=['/checkin'],
-        auth={'api_key': 'sk_live_7e8f174b18_ly6uZZQr4uCpUhDN-_X2i6FjFn2Oa3wcoM4L3GPj74s'} # <-- Ponha sua chave aqui
+        auth={'api_key': 'sk_live_f7d34f213a_ajd7fLnMllb6jH4wekplTNLcURa6B6-l29OASx9N_bk'} # <-- Ponha sua chave aqui
     )
     
     # Mantém o script rodando infinitamente aguardando eventos

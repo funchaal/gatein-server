@@ -57,3 +57,14 @@ class ValidateForgotCodeRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     new_password: str
+
+class ProfilePhoneVerifyRequest(BaseModel):
+    phone: str
+    code: str
+
+class EmailSendRequest(BaseModel):
+    email: str
+
+class EmailVerifyRequest(BaseModel):
+    email: str
+    code: str

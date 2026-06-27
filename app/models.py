@@ -107,6 +107,7 @@ class User(Base):
     tax_id = Column(String(14), unique=True, nullable=False)
     name = Column(String(100))
     phone = Column(String(20))
+    email = Column(String(100), unique=True, nullable=True)
     password_hash = Column(String(255))
 
     validated_device = Column(String(100))
