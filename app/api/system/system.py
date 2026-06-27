@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, EmailStr, HttpUrl
@@ -106,6 +107,10 @@ class AllowedDomainCreate(BaseModel):
     url: HttpUrl 
     is_active: Optional[bool] = True
 
+class CompanyUserPasswordUpdate(BaseModel):
+    password: str = Field(..., description="Nova senha de acesso do usuário da empresa")
+
+
 @router.post("/allowed-domains")
 def create_allowed_domain(
     payload: AllowedDomainCreate,
@@ -191,3 +196,34 @@ def deactivate_allowed_domain(
             "is_active": domain_obj.is_active
         }
     }
+
+
+@router.put("/company-users/{user_id}/password", status_code=200)
+def update_company_user_password(
+    user_id: uuid.UUID,
+    body: CompanyUserPasswordUpdate,
+    db: Session = Depends(get_db),
+    _authorized: bool = Depends(get_current_super_admin)
+):
+    # 1. Busca o usuário da empresa
+    user = db.query(CompanyUser).filter(CompanyUser.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "USER_NOT_FOUND", "message": "Usuário não encontrado."}
+        )
+
+    try:
+        # 2. Atualiza a senha
+        user.password_hash = hash_secret(body.password)
+        db.commit()
+        return {
+            "success": True,
+            "message": "Senha do usuário da empresa atualizada com sucesso."
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": str(e)}
+        )

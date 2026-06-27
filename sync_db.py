@@ -6,7 +6,8 @@ from app.models import (
     Company, Terminal, TruckingCompany,
     Appointment, Ticket, User, CompanyUser,
     Driver, RegisterRequest, Trip,
-    AppointmentLayout, TicketLayout, TripLayout
+    AppointmentLayout, TicketLayout, TripLayout,
+    Announcement
 )
 
 def hard_reset():

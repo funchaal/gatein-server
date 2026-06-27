@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List
+from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -83,13 +84,17 @@ async def process_checkin(
 
         if not appointment:
             continue 
+            
+        appointment.status = "CHECKED_IN"
 
+        now = datetime.now(timezone.utc)
         new_ticket = Ticket(
             appointment_id=appointment.id,
             appointment_ref=appointment_ref,
             terminal_id=terminal_id,
             layout_ref=layout_ref,
-            content=ticket_content
+            content=ticket_content,
+            created_at=now
         )
         db.add(new_ticket)
         
@@ -98,7 +103,8 @@ async def process_checkin(
                 appointment_ref=appointment_ref,
                 ticket={
                     "layout_ref": layout_ref,
-                    "content": ticket_content
+                    "content": ticket_content,
+                    "created_at": now.isoformat()
                 }
             )
         )

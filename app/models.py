@@ -168,8 +168,8 @@ class Appointment(Base):
 
 # Mapa estático — fonte da verdade por tipo de empresa
 COMPANY_TYPE_MODULES = {
-    'terminal':         {'geofence', 'appointment_layouts', 'ticket_layouts', 'services', 'company_information', 'users', 'api_keys'},
-    'trucking_company': {'trip_layouts', 'services', 'company_information', 'users', 'api_keys'},
+    'terminal':         {'geofence', 'appointment_layouts', 'ticket_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements'},
+    'trucking_company': {'trip_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements'},
 }
 
 class CompanyUser(Base):
@@ -193,6 +193,7 @@ class CompanyUser(Base):
         'company_information':  'read',
         'users':                'none',
         'api_keys':             'none',
+        'announcements':        'write',
         # módulos específicos são adicionados conforme o tipo da empresa
         # terminal:         geofence, appointment_layouts, ticket_layouts
         # trucking_company: trip_layouts
@@ -384,4 +385,32 @@ class CompanyService(Base):
         Index('idx_company_services_lookup', 'company_id', 'is_active'),
         Index('idx_company_services_ids', 'id'),
         Index('idx_company_services_domain', 'domain_id'),
+    )
+
+
+class Announcement(Base):
+    __tablename__ = 'announcements'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    
+    title = Column(String(100), nullable=False)
+    subtitle = Column(String(150), nullable=True)
+    description = Column(Text, nullable=True)
+    image_url = Column(String(500), nullable=True)
+    image_position = Column(JSONB, default=dict) # stores { x: float, y: float, scale: float }
+    
+    is_active = Column(Boolean, default=True)
+    start_at = Column(DateTime(timezone=True), nullable=True)
+    end_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relacionamento com a empresa
+    company = relationship("Company")
+
+    __table_args__ = (
+        Index('idx_announcements_company', 'company_id'),
+        Index('idx_announcements_active', 'is_active', 'start_at', 'end_at'),
     )

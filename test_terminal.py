@@ -19,22 +19,23 @@ def on_request_checkin(data):
     # Ele gera o Ack automático que o 'sio.call' do servidor está esperando!
     return [
         {
-            "appointment_ref": "AG-2026-004",
+            "appointment_ref": "AG-2026-002",
             "ticket": {
-                "layout_ref": "2",
+                "layout_ref": "3",
                 "content": {
-                    "status":             "Acesso Liberado",
-                    "area_coleta":        "P-4",
-                    "numero_container":   "MSCU 741830-2",
-                    "motorista":          "Robson Alves Pinto",
-                    "placa":              "SP-GH319",
-                    "placa_carreta":      "MG-AA9821",
-                    "transportadora":     "MSC Logística Brasil",
-                    "tipo_operacao":      "Retirada de vazio",
-                    "armador":            "Mediterranean Shipping Co.",
-                    "booking":            "BKG-7748821",
-                    "previsao_navio":     "18/07 — MSC ARIES",
-                    "condicao_container": "Container vistoriado. Amassado na parede lateral direita registrado em sistema. Não impede operação.",
+                    "placa": "ABC-1234",
+                    "status": "CHECKED_IN",
+                    "armador": "Maersk Line",
+                    "booking": "BKG-99281726",
+                    "motorista": "Carlos de Oliveira Souza",
+                    "created_at": "2026-06-25T14:30:00Z",
+                    "area_coleta": "Quadra C",
+                    "placa_carreta": "XYZ-9876",
+                    "tipo_operacao": "CARREGAMENTO_SOJA",
+                    "previsao_navio": "2026-06-28T07:00:00Z",
+                    "transportadora": "Logística TransBrasil S/A",
+                    "gate_pass_token": "PASS-9021-SOJA",
+                    "condicao_container": "Lacre intacto. Sem avarias estruturais observadas."
                 },
     }
         }
