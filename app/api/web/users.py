@@ -40,8 +40,19 @@ class UserListResponse(BaseModel):
     data: List[UserResponseData]
 
 class UserSingleResponse(BaseModel):
+    """Response containing details of a single company user."""
     success: bool = True
     data: UserResponseData
+
+class DeleteUserResponseData(BaseModel):
+    """Metadata detailing status of a deleted company user."""
+    status: str
+    id: str
+
+class DeleteUserResponse(BaseModel):
+    """Response returned upon company user deletion operation."""
+    success: bool = True
+    data: DeleteUserResponseData
 
 
 # --- ROTAS ---
@@ -156,12 +167,20 @@ def update_user(
         )
 
 
-@router.delete("/users/{user_id}")
+@router.delete(
+    "/users/{user_id}", 
+    response_model=DeleteUserResponse,
+    summary="Delete Company User",
+    description="Deletes a company user by ID. A user cannot delete their own account."
+)
 def delete_user(
     user_id: uuid.UUID,
     current_user: CompanyUser = Depends(get_current_admin_company_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Deletes a target company user account.
+    """
     if current_user.id == user_id:
         raise HTTPException(
             status_code=400, 

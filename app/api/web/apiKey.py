@@ -22,23 +22,33 @@ class APIKeyGenerateResponse(BaseModel):
     data: APIKeyGenerateResponseData
 
 class APIKeyValidateResponseData(BaseModel):
-    valid: bool
-    company_id: str
-    username: str
+    """Schema representing API key validation metadata properties of a company."""
     type: str
+    username: str
+    name: str
+    tax_id: str
 
 class APIKeyValidateResponse(BaseModel):
+    """Response containing API key validation information."""
     success: bool = True
     data: APIKeyValidateResponseData
 
 
 # --- ROTAS ---
 
-@router.post("/generate", response_model=APIKeyGenerateResponse)
+@router.post(
+    "/generate", 
+    response_model=APIKeyGenerateResponse,
+    summary="Generate API Key",
+    description="Generates a new secure API Key, hashes it, and stores prefix + hash in the database."
+)
 def generate_api_key(
     current_user: CompanyUser = Depends(get_current_admin_company_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Creates a new key pair, updating the company configuration. Returns the plaintext key.
+    """
     company = db.query(Company).get(current_user.company_id)
     if not company:
         raise HTTPException(
@@ -76,8 +86,16 @@ def generate_api_key(
         )
     
 
-@router.get("/validate")
+@router.get(
+    "/validate", 
+    response_model=APIKeyValidateResponse,
+    summary="Validate API Key",
+    description="Validates an incoming API Key, returning company profile details associated with the key."
+)
 def validate_api_key_endpoint(company: Company = Depends(get_company_from_api_key)):
+    """
+    Validates API key authenticity and returns associated metadata details.
+    """
     return {
         "success": True,
         "data": {

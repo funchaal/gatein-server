@@ -145,14 +145,13 @@ class Appointment(Base):
     layout_ref = Column(String(50), nullable=True)
     
     user_tax_id = Column(String(14), index=True)
-    operation_type = Column(String(50), nullable=False)
     status = Column(String(20), default='SCHEDULED')
     summary = Column(String(150))
     vehicle_plate = Column(String(10), index=True)
     schedule_start_time = Column(DateTime(timezone=True))
     schedule_end_time = Column(DateTime(timezone=True))
-    schedule_start_tolerance_min = Column(Integer, default=0)
-    schedule_end_tolerance_min = Column(Integer, default=0)
+    schedule_start_tolerance = Column(Integer, default=0)
+    schedule_end_tolerance = Column(Integer, default=0)
     custom_data = Column(JSONB)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -324,11 +323,34 @@ class Trip(Base):
     
     schedule_start_time = Column(DateTime(timezone=True))
     schedule_end_time = Column(DateTime(timezone=True))
-    schedule_start_tolerance_min = Column(Integer, default=0)
-    schedule_end_tolerance_min = Column(Integer, default=0)
+    schedule_start_tolerance = Column(Integer, default=0)
+    schedule_end_tolerance = Column(Integer, default=0)
     
     # Flexibilidade via layout
     custom_data = Column(JSONB, default={})
+
+    # origin fields
+    origin_street = Column(String(150))
+    origin_number = Column(String(20))
+    origin_city = Column(String(100))
+    origin_state = Column(String(50))
+    origin_country = Column(String(50))
+    origin_zip = Column(String(20))
+    origin_lat = Column(Float)
+    origin_lng = Column(Float)
+
+    # destiny fields
+    destiny_street = Column(String(150))
+    destiny_number = Column(String(20))
+    destiny_city = Column(String(100))
+    destiny_state = Column(String(50))
+    destiny_country = Column(String(50))
+    destiny_zip = Column(String(20))
+    destiny_lat = Column(Float)
+    destiny_lng = Column(Float)
+    
+    from_location = Column(String(100))
+    to_location = Column(String(100))
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -414,3 +436,53 @@ class Announcement(Base):
         Index('idx_announcements_company', 'company_id'),
         Index('idx_announcements_active', 'is_active', 'start_at', 'end_at'),
     )
+
+
+class AppointmentLog(Base):
+    __tablename__ = 'appointments_logs'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    appointment_id = Column(UUID(as_uuid=True), ForeignKey('appointments.id'), nullable=False)
+    event = Column(String(100), nullable=False)
+    message = Column(Text, nullable=True)
+    json = Column(JSONB, nullable=True, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relacionamentos
+    company = relationship("Company")
+    appointment = relationship("Appointment")
+
+
+class TripLog(Base):
+    __tablename__ = 'trips_logs'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    trip_id = Column(UUID(as_uuid=True), ForeignKey('trips.id'), nullable=False)
+    event = Column(String(100), nullable=False)
+    message = Column(Text, nullable=True)
+    json = Column(JSONB, nullable=True, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relacionamentos
+    company = relationship("Company")
+    trip = relationship("Trip")
+
+
+class AnnouncementLog(Base):
+    __tablename__ = 'announcements_logs'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    announcement_id = Column(UUID(as_uuid=True), ForeignKey('announcements.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True)
+    company_user_id = Column(UUID(as_uuid=True), ForeignKey('companies_users.id'), nullable=True)
+    event = Column(String(100), nullable=False)
+    message = Column(Text, nullable=True)
+    json = Column(JSONB, nullable=True, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relacionamentos
+    announcement = relationship("Announcement")
+    user = relationship("User")
+    company_user = relationship("CompanyUser")

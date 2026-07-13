@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 import json
@@ -19,11 +20,46 @@ from jose import jwt, JWTError
 
 router = APIRouter()
 
-@router.post("/reset/verify")
+# --- SCHEMAS (Pydantic Response Models) ---
+
+class TokenResponseData(BaseModel):
+    """Wrapped password reset recovery JWT token."""
+    token: str
+
+class TokenResponse(BaseModel):
+    """Response containing recovery validation JWT."""
+    success: bool = True
+    data: TokenResponseData
+
+class ForgotPasswordResponseData(BaseModel):
+    """Censored phone parameter for OTP recovery mapping."""
+    phone: str
+
+class ForgotPasswordResponse(BaseModel):
+    """Response returned upon successful forgot password request."""
+    success: bool = True
+    data: ForgotPasswordResponseData
+
+class SimpleSuccessResponse(BaseModel):
+    """Simple verification success response."""
+    success: bool = True
+
+
+# --- ROUTES ---
+
+@router.post(
+    "/reset/verify", 
+    response_model=TokenResponse,
+    summary="Verify Current Password",
+    description="Validates the user's password while logged in, returning a single-use token valid for 10 minutes to authorize a password change."
+)
 def verify_password_logged_in(
     body: VerifyCurrentPasswordRequest,
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Validates current active password and issues a password-change authorization token.
+    """
     if not verify_secret(current_user.password_hash, body.current_password):
         raise HTTPException(status_code=401, detail={"code": "CURRENT_PASSWORD_INVALID"})
 
@@ -40,8 +76,17 @@ def verify_password_logged_in(
     
     return {"success": True, "data": {"token": token}}
 
-@router.post("/forgot")
+
+@router.post(
+    "/forgot", 
+    response_model=ForgotPasswordResponse,
+    summary="Request Password Recovery",
+    description="Initiates recovery flow by validating CPF and Driver License. Generates a 6-digit verification code in Redis."
+)
 def forgot_password_request(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Checks driver details and initializes OTP recovery code in Redis.
+    """
     driver = db.query(Driver).filter_by(tax_id=body.tax_id).first()
     if not driver or driver.driver_license_number != body.driver_license:
         raise HTTPException(status_code=400, detail={"code": "DRIVER_LICENSE_INVALID"})
@@ -67,8 +112,17 @@ def forgot_password_request(body: ForgotPasswordRequest, db: Session = Depends(g
 
     return {"success": True, "data": { "phone": censored_phone } }
 
-@router.post("/validate-code")
+
+@router.post(
+    "/validate-code", 
+    response_model=TokenResponse,
+    summary="Validate Recovery Code",
+    description="Verifies the 6-digit recovery OTP code sent to user. Grants temporary password change token upon validation."
+)
 def validate_forgot_code(body: ValidateForgotCodeRequest, db: Session = Depends(get_db)):
+    """
+    Validates recovery code and returns recovery JWT. Discards code if attempts exceed limit.
+    """
     redis_key = f"pwd_recovery:{body.tax_id}"
     stored = redis_client.get(redis_key)
     
@@ -109,12 +163,21 @@ def validate_forgot_code(body: ValidateForgotCodeRequest, db: Session = Depends(
     
     return {"success": True, "data": {"token": token}}
 
-@router.post("/change")
+
+@router.post(
+    "/change", 
+    response_model=SimpleSuccessResponse,
+    summary="Change Password",
+    description="Updates user password to new credentials using the X-Password-Reset-Token code authorization header."
+)
 def change_password(
     body: ChangePasswordRequest,
     x_password_reset_token: Optional[str] = Header(None, alias="X-Password-Reset-Token"),
     db: Session = Depends(get_db)
 ):
+    """
+    Decodes the password recovery JWT token and commits new password hash to database User.
+    """
     if not x_password_reset_token:
         raise HTTPException(status_code=401, detail={"code": "MISSING_OR_INVALID_TOKEN"})
         

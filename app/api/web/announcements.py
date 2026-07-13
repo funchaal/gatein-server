@@ -1,4 +1,5 @@
 import uuid
+import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -7,9 +8,28 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import require_permission
-from app.models import CompanyUser, Announcement
+from app.models import CompanyUser, Announcement, AnnouncementLog
 
 router = APIRouter()
+
+# --- HELPER LOGS ---
+def create_announcement_log(db: Session, announcement_id: Any, company_user_id: Any, event: str, message: str, data: dict):
+    """Logs action events on announcements for audit logs tracking."""
+    def json_serializer(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+        
+    serialized_data = json.loads(json.dumps(data, default=json_serializer))
+    
+    log = AnnouncementLog(
+        announcement_id=announcement_id,
+        company_user_id=company_user_id,
+        event=event,
+        message=message,
+        json=serialized_data
+    )
+    db.add(log)
 
 # --- SCHEMAS ---
 
@@ -54,9 +74,20 @@ class AnnouncementListResponse(BaseModel):
     data: List[AnnouncementResponseData]
 
 class AnnouncementSingleResponse(BaseModel):
+    """Response containing details of a single announcement."""
     success: bool = True
     data: AnnouncementResponseData
     message: Optional[str] = None
+
+class AnnouncementDeleteResponseData(BaseModel):
+    """Metadata detailing the deletion status of an announcement."""
+    status: str
+    id: str
+
+class AnnouncementDeleteResponse(BaseModel):
+    """Response indicating the successful deletion of an announcement."""
+    success: bool = True
+    data: AnnouncementDeleteResponseData
 
 
 # --- ROTAS ---
@@ -106,6 +137,19 @@ def create_announcement(
             end_at=body.end_at
         )
         db.add(new_announcement)
+        db.flush()
+        create_announcement_log(
+            db=db,
+            announcement_id=new_announcement.id,
+            company_user_id=current_user.id,
+            event="created",
+            message="Aviso criado pelo operador.",
+            data={
+                "title": new_announcement.title,
+                "subtitle": new_announcement.subtitle,
+                "is_active": new_announcement.is_active
+            }
+        )
         db.commit()
         
         return {
@@ -155,6 +199,15 @@ def update_announcement(
         if body.start_at is not None:        target.start_at = body.start_at
         if body.end_at is not None:          target.end_at = body.end_at
 
+        db.flush()
+        create_announcement_log(
+            db=db,
+            announcement_id=target.id,
+            company_user_id=current_user.id,
+            event="updated",
+            message="Aviso atualizado pelo operador.",
+            data=body.dict(exclude_none=True)
+        )
         db.commit()
         
         return {
@@ -196,6 +249,15 @@ def update_announcement_status(
 
     try:
         target.is_active = body.is_active
+        db.flush()
+        create_announcement_log(
+            db=db,
+            announcement_id=target.id,
+            company_user_id=current_user.id,
+            event="updated",
+            message=f"Status de ativação alterado para {body.is_active}.",
+            data={"is_active": body.is_active}
+        )
         db.commit()
         
         return {
@@ -221,12 +283,20 @@ def update_announcement_status(
             detail={"code": "INTERNAL_ERROR", "message": str(e)}
         )
 
-@router.delete("/announcements/{announcement_id}")
+@router.delete(
+    "/announcements/{announcement_id}", 
+    response_model=AnnouncementDeleteResponse,
+    summary="Delete Announcement",
+    description="Deletes an announcement and records the deletion event in the logs."
+)
 def delete_announcement(
     announcement_id: uuid.UUID,
     current_user: CompanyUser = Depends(require_permission('announcements', 'write')),
     db: Session = Depends(get_db)
 ):
+    """
+    Deletes a target announcement after validating company ownership.
+    """
     target = db.query(Announcement).filter_by(id=announcement_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
@@ -235,6 +305,15 @@ def delete_announcement(
         )
 
     try:
+        create_announcement_log(
+            db=db,
+            announcement_id=target.id,
+            company_user_id=current_user.id,
+            event="deleted",
+            message="Aviso excluído pelo operador.",
+            data={"title": target.title}
+        )
+        db.flush()
         db.delete(target)
         db.commit()
         return {"success": True, "data": {"status": "deleted", "id": str(announcement_id)}}

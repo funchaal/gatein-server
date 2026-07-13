@@ -1,17 +1,59 @@
 import uuid
 import math
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_, case, cast, Float
+
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models import Company, User, Appointment, Trip, Terminal
 
 router = APIRouter()
 
-def serialize_company(company, distance_km=None, appointment_count=0, trip_count=0):
+# --- SCHEMAS (Pydantic Response Models) ---
+
+class CompanyAddressSchema(BaseModel):
+    """Schema representing structured address properties of a company."""
+    street: Optional[str] = None
+    number: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    zip: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+class MobileCompanyResponseSchema(BaseModel):
+    """Schema mapping serialized company attributes for mobile devices."""
+    id: str
+    name: str
+    branch_name: Optional[str] = None
+    type: str
+    tax_id: str
+    unit_code: Optional[str] = None
+    phone: str
+    email: str
+    logo_url: Optional[str] = None
+    address: CompanyAddressSchema
+    geofence: Optional[Dict[str, Any]] = None
+    distance_km: Optional[float] = None
+    appointment_count: int = 0
+    trip_count: int = 0
+
+
+# --- HELPERS ---
+
+def serialize_company(company, distance_km=None, appointment_count=0, trip_count=0) -> dict:
+    """
+    Utility serializer mapping database Company instances to mobile-friendly JSON dict formats.
+    Loads nested address, logo mappings, geofences, and activity aggregations.
+    """
     geofence_data = getattr(company, 'geofence', None)
+    logo = None
+    if company.config:
+        logo = company.config.get('logo') or company.config.get('logo_url') or company.config.get('icon_url')
     
     return {
         "id": str(company.id),
@@ -22,7 +64,7 @@ def serialize_company(company, distance_km=None, appointment_count=0, trip_count
         "unit_code": company.unit_code,
         "phone": company.phone,
         "email": company.email,
-        "logo_url": company.config.get('logo') or company.config.get('logo_url') or company.config.get('icon_url'),
+        "logo_url": logo,
         "address": {
             "street": company.address_street,
             "number": company.address_number,
@@ -39,17 +81,29 @@ def serialize_company(company, distance_km=None, appointment_count=0, trip_count
         "trip_count": trip_count
     }
 
-@router.get("/companies/search")
+
+# --- ROUTES ---
+
+@router.get(
+    "/companies/search", 
+    response_model=List[MobileCompanyResponseSchema],
+    summary="Search Companies",
+    description="Finds companies by partial name or branch title with optional geolocation distance calculations."
+)
 def search_companies(
     q: str = Query(None, min_length=2),
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
     db: Session = Depends(get_db)
 ):
+    """
+    Filters companies by searching text queries against normalized unaccented title values.
+    Calculates distances using Haversine formulas in PostgreSQL if geographic coordinates are provided.
+    """
     if not q or len(q.strip()) < 2: 
         return []
 
-    # 1. Aplicamos o f_unaccent na concatenação das colunas
+    # Apply f_unaccent function to search concatenated title properties
     search_vector = func.f_unaccent(
         func.concat(Company.name, ' ', func.coalesce(Company.branch_name, ''))
     )
@@ -59,6 +113,7 @@ def search_companies(
 
     distance_col = None
     TerminalTable = Terminal.__table__
+    
     if lat is not None and lng is not None:
         effective_lat = case(
             (
@@ -107,7 +162,13 @@ def search_companies(
         resultados = db.scalars(stmt).all()
         return [serialize_company(r) for r in resultados]
 
-@router.get("/companies/nearby")
+
+@router.get(
+    "/companies/nearby", 
+    response_model=List[MobileCompanyResponseSchema],
+    summary="Get Nearby Companies",
+    description="Queries companies located within a specified radius (in km) from current driver position."
+)
 def get_nearby_companies(
     lat: float = Query(..., description="Latitude atual do usuário"),
     lng: float = Query(..., description="Longitude atual do usuário"),
@@ -115,16 +176,17 @@ def get_nearby_companies(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Validação básica de coordenadas
+    """
+    Computes spatial distance using high-precision Haversine queries on the DB layer.
+    """
     if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
         raise HTTPException(status_code=400, detail="Coordenadas inválidas.")
 
-    # Raio da Terra em quilômetros
+    # Earth Radius constant
     EARTH_RADIUS_KM = 6371.0
-    
     TerminalTable = Terminal.__table__
 
-    # Resolução de coordenadas efetivas (Geofence -> Endereço)
+    # Resolve effective coordinates (prioritize Geofence center over default address coordinates)
     effective_lat = case(
         (
             and_(
@@ -153,7 +215,7 @@ def get_nearby_companies(
     user_lat_rad = func.radians(lat)
     user_lng_rad = func.radians(lng)
 
-    # Cálculo do núcleo da Fórmula de Haversine
+    # Core Haversine formula calculation
     math_expr = (
         func.sin(user_lat_rad) * func.sin(lat_rad) +
         func.cos(user_lat_rad) * func.cos(lat_rad) * func.cos(lng_rad - user_lng_rad)
@@ -161,7 +223,7 @@ def get_nearby_companies(
 
     distance_expr = EARTH_RADIUS_KM * func.acos(func.least(1.0, math_expr))
 
-    # Construção da Query
+    # Build query mapping
     stmt = select(
         Company,
         distance_expr.label("distance_km")
@@ -182,14 +244,24 @@ def get_nearby_companies(
         ) for r in resultados
     ]
 
-@router.get("/companies/initial")
+
+@router.get(
+    "/companies/initial", 
+    response_model=List[MobileCompanyResponseSchema],
+    summary="Get Initial Landing Companies List",
+    description="Generates a customized dashboard companies list containing recent activities and 10 closest terminals."
+)
 def get_initial_companies(
     lat: Optional[float] = Query(None, description="Latitude atual do usuário"),
     lng: Optional[float] = Query(None, description="Longitude atual do usuário"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Obter todos os compromissos (appointments) do usuário e contar por terminal
+    """
+    Constructs the landing dashboard list. Exposes recent companies from user's appointments and trips
+    combined with nearest companies sorted by geolocation.
+    """
+    # 1. Fetch user appointments and count occurrences
     appointments = (
         db.query(Appointment)
         .filter(Appointment.user_tax_id == current_user.tax_id, Appointment.status != "DELETED")
@@ -202,7 +274,7 @@ def get_initial_companies(
         if a.terminal_id:
             appointment_counts[a.terminal_id] = appointment_counts.get(a.terminal_id, 0) + 1
             
-    # 2. Obter todas as viagens (trips) do usuário e contar por transportadora
+    # 2. Fetch user trips and count occurrences
     trips = []
     if current_user.driver_id:
         trips = (
@@ -217,7 +289,7 @@ def get_initial_companies(
         if t.trucking_company_id:
             trip_counts[t.trucking_company_id] = trip_counts.get(t.trucking_company_id, 0) + 1
         
-    # 3. Mesclar compromissos e viagens para ordenar cronologicamente por atividade recente
+    # 3. Combine appointments and trips to sort by recent activities
     combined = []
     for a in appointments:
         if a.terminal_id and a.schedule_start_time:
@@ -226,10 +298,9 @@ def get_initial_companies(
         if t.trucking_company_id and t.schedule_start_time:
             combined.append((t.trucking_company_id, t.schedule_start_time))
             
-    # Ordenar por data decrescente
     combined.sort(key=lambda x: x[1], reverse=True)
     
-    # Selecionar as primeiras 5 empresas únicas
+    # Select top 5 unique recent companies
     recent_company_ids = []
     seen = set()
     for company_id, _ in combined:
@@ -239,7 +310,6 @@ def get_initial_companies(
             if len(recent_company_ids) == 5:
                 break
                 
-    # Buscar os dados destas empresas recentes
     recent_companies = []
     if recent_company_ids:
         companies_map = {
@@ -247,7 +317,7 @@ def get_initial_companies(
         }
         recent_companies = [companies_map[cid] for cid in recent_company_ids if cid in companies_map]
         
-    # 4. Obter as 10 empresas mais próximas por geolocalização (sem filtrar as recentes)
+    # 4. Fetch 10 closest companies by geolocation
     nearby_companies = []
     nearby_distances = {}
     if lat is not None and lng is not None:
@@ -256,7 +326,7 @@ def get_initial_companies(
             
         TerminalTable = Terminal.__table__
 
-        # Resolução de coordenadas efetivas (Geofence -> Endereço)
+        # Resolve coordinates prioritizations
         effective_lat = case(
             (
                 and_(
@@ -267,7 +337,6 @@ def get_initial_companies(
             ),
             else_=Company.address_lat
         )
-        
         effective_lng = case(
             (
                 and_(
@@ -304,11 +373,11 @@ def get_initial_companies(
         nearby_companies = resultados
         nearby_distances = {r[0].id: r[1] for r in resultados}
         
-    # 5. Formatar a resposta final unificada
+    # 5. Format unified landing responses
     response = []
     recent_ids_set = set(recent_company_ids)
     
-    # Helper em Python para calcular distância Haversine
+    # Python-level helper to calculate Haversine distance
     def calculate_haversine(lat1, lng1, lat2, lng2):
         rad = 3.141592653589793 / 180.0
         dlat = (lat2 - lat1) * rad
@@ -318,14 +387,12 @@ def get_initial_companies(
         c = 2 * math.asin(min(1.0, math.sqrt(a)))
         return 6371.0 * c
         
-    # Adicionar recentes primeiro
+    # Add recent companies first
     for rc in recent_companies:
         dist = None
-        # Opcionalmente calcula/retorna distância se a empresa estiver entre as 10 mais próximas
         if rc.id in nearby_distances:
             dist = round(nearby_distances[rc.id], 2)
         elif lat is not None and lng is not None:
-            # Se não está nas 10 mais próximas, calcula manualmente com base na geofence ou endereço
             comp_lat = None
             comp_lng = None
             if rc.type == 'terminal' and hasattr(rc, 'geofence') and rc.geofence:
@@ -350,7 +417,7 @@ def get_initial_companies(
             )
         )
         
-    # Adicionar as 10 mais próximas que não estão nas recentes
+    # Add closest companies that are not already present in the recents list
     for nc in nearby_companies:
         if nc[0].id not in recent_ids_set:
             response.append(

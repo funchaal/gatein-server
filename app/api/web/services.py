@@ -49,9 +49,31 @@ class ServiceListResponse(BaseModel):
     data: List[ServiceResponseData]
 
 class ServiceSingleResponse(BaseModel):
+    """Response containing details of a single company service."""
     success: bool = True
     data: ServiceResponseData
     message: Optional[str] = None
+
+class ServiceBatchStatusResponseData(BaseModel):
+    """Metadata detailing status updating status and updated service IDs."""
+    status: str
+    ids: List[str]
+
+class ServiceBatchStatusResponse(BaseModel):
+    """Response returned upon batch service status update operation."""
+    success: bool = True
+    data: ServiceBatchStatusResponseData
+    message: Optional[str] = None
+
+class ServiceBatchDeleteResponseData(BaseModel):
+    """Metadata containing status details and deleted service IDs."""
+    status: str
+    ids: List[str]
+
+class ServiceBatchDeleteResponse(BaseModel):
+    """Response returned upon batch service deletion operation."""
+    success: bool = True
+    data: ServiceBatchDeleteResponseData
 
 
 # --- ROTAS ---
@@ -206,12 +228,20 @@ def update_service(
             detail={"code": "INTERNAL_ERROR", "message": str(e)}
         )
 
-@router.patch("/services/status")
+@router.patch(
+    "/services/status", 
+    response_model=ServiceBatchStatusResponse,
+    summary="Update Services Activation Status",
+    description="Bulk updates activation flags for a list of service IDs, ensuring they belong to the user's company."
+)
 def update_services_status(
     body: ServiceBatchStatusRequest,
     current_user: CompanyUser = Depends(require_permission('services', 'write')),
     db: Session = Depends(get_db)
 ):
+    """
+    Updates is_active properties of requested company services. Validates domain permissions.
+    """
     targets = db.query(CompanyService).filter(
         CompanyService.id.in_(body.service_ids),
         CompanyService.company_id == current_user.company_id
@@ -226,10 +256,17 @@ def update_services_status(
     messages = []
     updated_ids = []
     
+    # Batch query allowed domains to avoid database query inside loop
+    domain_ids = {t.domain_id for t in targets if t.domain_id}
+    allowed_domains_map = {}
+    if domain_ids:
+        allowed_domains = db.query(AllowedDomain).filter(AllowedDomain.id.in_(domain_ids)).all()
+        allowed_domains_map = {ad.id: ad for ad in allowed_domains}
+    
     try:
         for target in targets:
-            allowed_domain = db.query(AllowedDomain).filter_by(id=target.domain_id).first()
-            if body.is_active and not allowed_domain.is_active:
+            allowed_domain = allowed_domains_map.get(target.domain_id)
+            if allowed_domain and body.is_active and not allowed_domain.is_active:
                 messages.append(f"Serviço '{target.title}' não pode ser ativado pois o domínio associado está desativado.")
                 target.is_active = False
             else:
@@ -250,12 +287,21 @@ def update_services_status(
             detail={"code": "INTERNAL_ERROR", "message": str(e)}
         )
 
-@router.delete("/services")
+
+@router.delete(
+    "/services", 
+    response_model=ServiceBatchDeleteResponse,
+    summary="Delete Services",
+    description="Bulk deletes services matching provided IDs list."
+)
 def delete_services(
     body: ServiceBatchDeleteRequest,
     current_user: CompanyUser = Depends(require_permission('services', 'write')),
     db: Session = Depends(get_db)
 ):
+    """
+    Deletes multiple company services in bulk.
+    """
     if not current_user.can("services", "write"):
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
 

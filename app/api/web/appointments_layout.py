@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Optional, List
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -9,17 +9,73 @@ from app.models import CompanyUser, AppointmentLayout
 
 router = APIRouter()
 
+# --- REQUEST SCHEMAS ---
+
 class LayoutUpsertRequest(BaseModel):
+    """Schema representing layout creation or update payload parameters."""
     ref: str = Field(..., description="Referência única do layout")
     layout_data: Any = Field(..., description="JSON contendo a estrutura do layout")
     title: Optional[str] = None
 
-@router.get("/appointment/layouts")
+
+# --- RESPONSE SCHEMAS ---
+
+class LayoutResponseData(BaseModel):
+    """Schema detailing individual layout metadata configuration parameters."""
+    id: int
+    ref: str
+    title: str
+    layout: Any
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class LayoutListResponse(BaseModel):
+    """Response containing a list of configurations layouts."""
+    success: bool = True
+    data: List[LayoutResponseData]
+
+class LayoutSingleResponse(BaseModel):
+    """Response containing details of a single configuration layout."""
+    success: bool = True
+    data: LayoutResponseData
+
+class LayoutUpsertResponseData(BaseModel):
+    """Metadata containing status details of a newly created/updated layout."""
+    ref: str
+    title: str
+    status: str
+
+class LayoutUpsertResponse(BaseModel):
+    """Response returned upon layout configuration upsert operation."""
+    success: bool = True
+    data: LayoutUpsertResponseData
+
+class LayoutDeleteResponseData(BaseModel):
+    """Metadata containing details of a deleted layout configuration."""
+    status: str
+    ref: str
+
+class LayoutDeleteResponse(BaseModel):
+    """Response returned upon layout configuration deletion operation."""
+    success: bool = True
+    data: LayoutDeleteResponseData
+
+
+# --- ROTAS ---
+
+@router.get(
+    "/appointment/layouts", 
+    response_model=LayoutListResponse,
+    summary="Get Appointment Layouts",
+    description="Lists all appointment layouts created for the operator's active terminal."
+)
 def get_appointment_layouts(
     current_user: CompanyUser = Depends(require_permission('appointment_layouts', 'read')),
     db: Session = Depends(get_db)
 ):
-
+    """
+    Fetches all registered appointment layouts for the active company terminal.
+    """
     layouts = db.query(AppointmentLayout).filter_by(terminal_id=current_user.company_id).all()
     
     return {"success": True, "data": [
@@ -35,13 +91,20 @@ def get_appointment_layouts(
     ]}
 
 
-@router.get("/appointment/layouts/{ref}")
+@router.get(
+    "/appointment/layouts/{ref}", 
+    response_model=LayoutSingleResponse,
+    summary="Get Appointment Layout by Reference",
+    description="Retrieves a specific appointment layout matching the provided reference value."
+)
 def get_appointment_layout(
     ref: str,
     current_user: CompanyUser = Depends(require_permission('appointment_layouts', 'read')),
     db: Session = Depends(get_db)
 ):
-
+    """
+    Looks up and returns details of a single appointment layout by its reference.
+    """
     layout_obj = db.query(AppointmentLayout).filter_by(
         terminal_id=current_user.company_id,
         ref=ref
@@ -60,13 +123,20 @@ def get_appointment_layout(
     }}
 
 
-@router.put("/appointment/layouts")
+@router.put(
+    "/appointment/layouts", 
+    response_model=LayoutUpsertResponse,
+    summary="Upsert Appointment Layout",
+    description="Registers a new appointment layout or modifies an existing one by matching reference."
+)
 def upsert_appointment_layout(
     body: LayoutUpsertRequest,
     current_user: CompanyUser = Depends(require_permission('appointment_layouts', 'write')),
     db: Session = Depends(get_db)
 ):
-
+    """
+    Saves layout details to the database (performs an UPDATE or INSERT action depending on existence).
+    """
     layout_obj = db.query(AppointmentLayout).filter_by(
         terminal_id=current_user.company_id,
         ref=body.ref
@@ -99,13 +169,20 @@ def upsert_appointment_layout(
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": str(e)})
 
 
-@router.delete("/appointment/layouts/{ref}")
+@router.delete(
+    "/appointment/layouts/{ref}", 
+    response_model=LayoutDeleteResponse,
+    summary="Delete Appointment Layout",
+    description="Deletes an appointment layout identified by reference."
+)
 def delete_appointment_layout(
     ref: str,
     current_user: CompanyUser = Depends(require_permission('appointment_layouts', 'write')),
     db: Session = Depends(get_db)
 ):
-
+    """
+    Removes an appointment layout configuration by matching reference.
+    """
     layout_obj = db.query(AppointmentLayout).filter_by(
         terminal_id=current_user.company_id,
         ref=ref

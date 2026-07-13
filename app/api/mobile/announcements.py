@@ -2,19 +2,20 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_, or_, case, cast, Float
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models import User, Company, Terminal, Appointment, Trip, Announcement
+from app.models import User, Company, Terminal, Appointment, Trip, Announcement, AnnouncementLog
 
 router = APIRouter()
 
 # --- SCHEMAS ---
 
 class MobileAnnouncementResponseData(BaseModel):
+    """Schema representing details of an announcement for mobile display."""
     id: str
     company_id: str
     title: str
@@ -27,19 +28,44 @@ class MobileAnnouncementResponseData(BaseModel):
     company_logo_url: Optional[str]
 
 class MobileAnnouncementListResponse(BaseModel):
+    """Schema representing the list response of active announcements."""
     success: bool = True
     data: List[MobileAnnouncementResponseData]
+
+class SimpleSuccessResponse(BaseModel):
+    """Standardized response indicating a successful request with a message."""
+    success: bool = True
+    message: str
+
+class MobileAnnouncementLogEventItem(BaseModel):
+    """Individual event parameter mapping an announcement interaction trace."""
+    announcement_id: uuid.UUID
+    event: Literal["viewed"]
+    message: Optional[str] = None
+    json_data: Optional[dict] = None
+
+class MobileAnnouncementLogEventsPayload(BaseModel):
+    """Payload encapsulating bulk announcement logging events."""
+    events: List[MobileAnnouncementLogEventItem]
 
 
 # --- ROTAS ---
 
-@router.get("/announcements", response_model=MobileAnnouncementListResponse)
+@router.get(
+    "/announcements", 
+    response_model=MobileAnnouncementListResponse,
+    summary="Get Active Announcements",
+    description="Returns active announcements for companies matching user appointments, trips, or within 50km radius."
+)
 def get_mobile_announcements(
     lat: Optional[float] = Query(None, description="Latitude atual do usuário"),
     lng: Optional[float] = Query(None, description="Longitude atual do usuário"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """
+    Retrieves and filters active announcements for the logged-in mobile driver.
+    """
     # 1. Obter todas as empresas onde o usuário tem agendamentos (não deletados)
     appointments = db.query(Appointment).filter(
         Appointment.user_tax_id == current_user.tax_id,
@@ -150,3 +176,42 @@ def get_mobile_announcements(
         })
 
     return {"success": True, "data": response_data}
+
+
+@router.post(
+    "/announcements/log-events",
+    response_model=SimpleSuccessResponse,
+    summary="Log Announcement Events",
+    description="Registers viewing events of announcements on the mobile driver app."
+)
+def log_mobile_announcement_events(
+    payload: MobileAnnouncementLogEventsPayload,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Logs viewed interaction for announcements in batch mode.
+    Pre-queries announcement records in a single batch query for efficiency.
+    """
+    if not payload.events:
+        return {"success": True, "message": "Nenhum evento enviado."}
+
+    # Batch query announcements to optimize database hits
+    ann_ids = [item.announcement_id for item in payload.events]
+    existing_anns = db.query(Announcement).filter(Announcement.id.in_(ann_ids)).all() if ann_ids else []
+    ann_map = {a.id: a for a in existing_anns}
+
+    for item in payload.events:
+        ann = ann_map.get(item.announcement_id)
+        if ann:
+            log = AnnouncementLog(
+                announcement_id=ann.id,
+                user_id=current_user.id,
+                event=item.event,
+                message=item.message or "Aviso visualizado no app móvel.",
+                json=item.json_data or {}
+            )
+            db.add(log)
+
+    db.commit()
+    return {"success": True, "message": "Eventos de avisos registrados com sucesso."}
