@@ -42,8 +42,12 @@ fastapi_app.include_router(admin_router)
 def load_doc_file(filename: str) -> str:
     import os
     docs_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gatein-docs", "docs"))
-    file_path = os.path.join(docs_dir, filename)
-    if os.path.exists(file_path):
+    file_path = None
+    for root, dirs, files in os.walk(docs_dir):
+        if filename in files:
+            file_path = os.path.join(root, filename)
+            break
+    if file_path and os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
