@@ -41,12 +41,18 @@ fastapi_app.include_router(admin_router)
 
 def load_doc_file(filename: str) -> str:
     import os
-    docs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "api", "public", "docs")
+    docs_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gatein-docs", "docs"))
     file_path = os.path.join(docs_dir, filename)
     if os.path.exists(file_path):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
+                content = f.read()
+                # Strip Docusaurus Front Matter if present
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        content = parts[2].strip()
+                return content
         except Exception as e:
             print(f"Error reading doc file {file_path}: {e}")
     return ""
