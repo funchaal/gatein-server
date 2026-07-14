@@ -78,13 +78,13 @@ def get_external_openapi():
             
     # 3. Retorna a documentação filtrada com tags detalhadas e descrição rica
     api_keys_content = load_doc_file("2_api_keys.md")
-    auth_content = load_doc_file("3_authentication.md")
     appointments_content = load_doc_file("4_appointments.md")
     trips_content = load_doc_file("5_trips.md")
-    services_auth_content = load_doc_file("6_services_auth.md")
+    services_auth_content = load_doc_file("10_custom_services.md")
     checkin_content = load_doc_file("7_checkin.md")
+    tickets_content = load_doc_file("11_tickets.md")
 
-    auth_description = f"{api_keys_content}\n\n---\n\n{auth_content}" if (api_keys_content or auth_content) else "Endpoints de autenticação e validação de tokens JWT / chaves de API."
+    auth_description = api_keys_content or "Endpoints de autenticação e validação de tokens JWT / chaves de API."
 
     tags_metadata = [
         {
@@ -105,7 +105,11 @@ def get_external_openapi():
         },
         {
             "name": "Websocket & Checkin",
-            "description": checkin_content or "Explicação do fluxo de check-in remoto via WebSockets (Socket.IO) integrado aos totens portuários."
+            "description": checkin_content or "Explicação do fluxo de check-in remoto via WebSockets (Socket.IO) integrado aos servidores de terminal."
+        },
+        {
+            "name": "Tickets",
+            "description": tickets_content or "Endpoints para criação, atualização e remoção de tickets digitais vinculados a agendamentos."
         }
     ]
     
