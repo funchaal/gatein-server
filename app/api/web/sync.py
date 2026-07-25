@@ -102,7 +102,7 @@ def sync_dashboard(
             db.query(Appointment)
             .filter(
                 Appointment.terminal_id == company_id,
-                func.date(Appointment.schedule_start_time) == today,
+                func.date(Appointment.window_start) == today,
                 Appointment.status != "DELETED",
             )
             .count()
@@ -123,9 +123,9 @@ def sync_dashboard(
             {
                 "ref": a.ref,
                 "summary": a.summary,
-                "plate": a.vehicle_plate,
+                "plate": a.license_plate,
                 "status": a.status,
-                "start": a.schedule_start_time.isoformat() if a.schedule_start_time else None,
+                "start": a.window_start.isoformat() if a.window_start else None,
             }
             for a in recent_appointments
         ]

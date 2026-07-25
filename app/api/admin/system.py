@@ -93,11 +93,11 @@ class AdminAppointmentData(BaseModel):
     user_tax_id: str
     status: str
     summary: str
-    vehicle_plate: Optional[str] = None
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
-    schedule_start_tolerance: Optional[int] = None
-    schedule_end_tolerance: Optional[int] = None
+    license_plate: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    start_tolerance: Optional[int] = None
+    end_tolerance: Optional[int] = None
     custom_data: Optional[Dict[str, Any]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -140,11 +140,11 @@ class AdminTripData(BaseModel):
     ref: str
     layout_ref: Optional[str] = None
     driver_id: Optional[str] = None
-    vehicle_plate: Optional[str] = None
+    license_plate: Optional[str] = None
     status: str
     summary: str
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
     custom_data: Optional[Dict[str, Any]] = None
     origin_street: Optional[str] = None
     origin_number: Optional[str] = None
@@ -477,11 +477,11 @@ def get_admin_appointments_logs(
             "user_tax_id": appt.user_tax_id,
             "status": appt.status,
             "summary": appt.summary,
-            "vehicle_plate": appt.vehicle_plate,
-            "schedule_start_time": appt.schedule_start_time.isoformat() if appt.schedule_start_time else None,
-            "schedule_end_time": appt.schedule_end_time.isoformat() if appt.schedule_end_time else None,
-            "schedule_start_tolerance": appt.schedule_start_tolerance,
-            "schedule_end_tolerance": appt.schedule_end_tolerance,
+            "license_plate": appt.license_plate,
+            "window_start": appt.window_start.isoformat() if appt.window_start else None,
+            "window_end": appt.window_end.isoformat() if appt.window_end else None,
+            "start_tolerance": appt.start_tolerance,
+            "end_tolerance": appt.end_tolerance,
             "custom_data": appt.custom_data,
             "created_at": appt.created_at.isoformat() if appt.created_at else None,
             "updated_at": appt.updated_at.isoformat() if appt.updated_at else None
@@ -586,11 +586,11 @@ def get_admin_trips_logs(
             "ref": trip_obj.ref,
             "layout_ref": trip_obj.layout_ref,
             "driver_id": str(trip_obj.driver_id) if trip_obj.driver_id else None,
-            "vehicle_plate": trip_obj.vehicle_plate,
+            "license_plate": trip_obj.license_plate,
             "status": trip_obj.status,
             "summary": trip_obj.summary,
-            "schedule_start_time": trip_obj.schedule_start_time.isoformat() if trip_obj.schedule_start_time else None,
-            "schedule_end_time": trip_obj.schedule_end_time.isoformat() if trip_obj.schedule_end_time else None,
+            "window_start": trip_obj.window_start.isoformat() if trip_obj.window_start else None,
+            "window_end": trip_obj.window_end.isoformat() if trip_obj.window_end else None,
             "custom_data": trip_obj.custom_data,
             "origin_street": trip_obj.origin_street,
             "origin_number": trip_obj.origin_number,

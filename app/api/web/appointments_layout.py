@@ -192,7 +192,7 @@ def delete_appointment_layout(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
 
     try:
-        db.delete(layout_obj)
+        layout_obj.is_active = False
         db.commit()
         return {"success": True, "data": {"status": "deleted", "ref": ref}}
     except Exception as e:

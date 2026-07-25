@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.redis import redis_client
 from app.core.security import generate_jwt, verify_secret, hash_secret
 from app.core.dependencies import get_current_user
-from app.models import User, RegisterRequest as RegisterRequestModel, Driver
+from app.models import User, RegisterRequest as RegisterRequestModel, Driver, StagingPassword
 from app.schemas.auth import (
     CheckStatusRequest, OTPSendRequest, OTPVerifyRequest,
     DriverLicenseRequest, RegisterRequest, MobileLoginRequest,
@@ -16,6 +16,7 @@ from app.schemas.auth import (
     EmailSendRequest, EmailVerifyRequest
 )
 from config import settings
+
 
 router = APIRouter()
 
@@ -373,4 +374,97 @@ def verify_profile_email(
         "name": current_user.name,
         "phone": current_user.phone,
         "email": current_user.email
-    }}}
+    }}}
+
+
+# ─── STAGING LOGIN ────────────────────────────────────────────────────────────
+
+class StagingLoginRequest(BaseModel):
+    """Credenciais de login para o ambiente de homologação."""
+    tax_id: str
+    staging_password: str
+    device: str
+
+
+@router.post(
+    "/staging/login",
+    response_model=AuthResponse,
+    summary="Staging Login (PROD=False only)",
+    description=(
+        "Login exclusivo para o ambiente de homologação. "
+        "Valida o CPF do motorista + a senha mestra da empresa. "
+        "Retorna um JWT com `company_id` no payload, ativando o "
+        "isolamento automático de dados por empresa nas queries ORM. "
+        "Este endpoint retorna 403 quando o servidor está em PROD=True."
+    )
+)
+def staging_login(body: StagingLoginRequest, db: Session = Depends(get_db)):
+    """
+    Fluxo de autenticação de staging:
+      1. Bloqueia em produção.
+      2. Valida que o motorista (User) existe pelo CPF.
+      3. Localiza a StagingPassword vinculada à empresa da senha fornecida.
+         (Busca em todas as empresas — a senha é globalmente única e forte.)
+      4. Valida device trust (mesmo comportamento do login normal).
+      5. Emite JWT com `company_id` adicional no payload.
+    """
+    # 1. Trava de segurança: nunca em produção
+    if settings.IS_PROD:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Este endpoint só está disponível no ambiente de homologação (PROD=False)."
+            }
+        )
+
+    # 2. Verifica que o motorista existe
+    user = db.query(User).filter_by(tax_id=body.tax_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail={"code": "USER_NOT_FOUND"})
+
+    # 3. Encontra qual empresa tem uma staging_password que bate com a fornecida.
+    #    Itera com verify_secret (bcrypt) — O(N empresas) mas N é sempre pequeno.
+    staging_records = db.query(StagingPassword).all()
+    matched_staging: StagingPassword | None = None
+    for record in staging_records:
+        if verify_secret(record.password_hash, body.staging_password):
+            matched_staging = record
+            break
+
+    if not matched_staging:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "STAGING_PASSWORD_INVALID"}
+        )
+
+    # 4. Valida device trust (mesmo critério do login normal)
+    if user.validated_device != body.device:
+        raise HTTPException(status_code=403, detail={"code": "DEVICE_NOT_VALIDATED"})
+
+    # 5. Emite JWT com company_id embutido para ativar tenant isolation nas queries
+    company_id = str(matched_staging.company_id)
+    token = generate_jwt(
+        {
+            "sub": str(user.id),
+            "tax_id": user.tax_id,
+            "device_id": body.device,
+            "company_id": company_id,   # ← chave do isolamento multi-tenant
+            "staging": True,            # ← flag informativa
+        },
+        exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "token": token,
+            "user": {
+                "tax_id": user.tax_id,
+                "name": user.name,
+                "phone": user.phone,
+                "email": user.email,
+            }
+        }
+    }
+

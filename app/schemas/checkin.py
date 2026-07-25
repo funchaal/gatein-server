@@ -6,3 +6,7 @@ class TicketItem(BaseModel):
     ticket: Dict[str, Any]
 
 # O schema do response será uma lista de TicketItem
+
+class CheckinResponse(BaseModel):
+    success: bool = True
+    message: str

@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
 from app.models import Company, Driver, Appointment, AppointmentLog, AppointmentLayout
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # --- HELPER LOGS ---
@@ -46,19 +48,19 @@ class AppointmentBaseSchema(BaseModel):
     """Schema representing core parameters of an appointment."""
     ref: str = Field(..., description="ID ou referência única externa do agendamento")
     layout_ref: str = Field(..., description="Referência do layout de agendamento a ser aplicado")
-    schedule_start_time: Optional[datetime] = Field(None, description="Data/hora de início agendada")
-    schedule_end_time: Optional[datetime] = Field(None, description="Data/hora de término agendada")
-    schedule_start_tolerance: int = Field(0, description="Tolerância de início em minutos")
-    schedule_end_tolerance: int = Field(0, description="Tolerância de término em minutos")
+    window_start: Optional[datetime] = Field(None, description="Data/hora de início agendada")
+    window_end: Optional[datetime] = Field(None, description="Data/hora de término agendada")
+    start_tolerance: int = Field(0, description="Tolerância de início em minutos")
+    end_tolerance: int = Field(0, description="Tolerância de término em minutos")
     summary: Optional[str] = Field(None, description="Resumo ou observações do agendamento")
-    vehicle_plate: Optional[str] = Field(None, description="Placa do veículo associado")
+    license_plate: Optional[str] = Field(None, description="Placa do veículo associado")
     custom_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metadados dinâmicos adicionais")
 
     @model_validator(mode='after')
     def check_dates(self) -> 'AppointmentBaseSchema':
         """Validates that schedule end time is strictly after the start time."""
-        if self.schedule_start_time and self.schedule_end_time:
-            if self.schedule_end_time <= self.schedule_start_time:
+        if self.window_start and self.window_end:
+            if self.window_end <= self.window_start:
                 raise ValueError("O horário de término deve ser após o início.")
         return self
 
@@ -98,6 +100,19 @@ class DeleteAppointmentsResponse(BaseModel):
     success: bool = True
     data: DeleteAppointmentsResponseData
 
+class PingAppointmentsPayload(BaseModel):
+    appointment_refs: Optional[List[str]] = Field(None, description="Lista de referências dos agendamentos a pingar")
+    appointment_ids: Optional[List[str]] = Field(None, description="Lista de IDs UUID dos agendamentos a pingar")
+
+class PingAppointmentsResponseData(BaseModel):
+    pinged_count: int
+    pinged_refs: List[str]
+    pinged_at: str
+
+class PingAppointmentsResponse(BaseModel):
+    success: bool = True
+    data: PingAppointmentsResponseData
+
 class AppointmentLogResponseItem(BaseModel):
     """Item schema representing a log trace of an appointment."""
     id: str
@@ -115,11 +130,11 @@ class AppointmentDataResponseItem(BaseModel):
     user_tax_id: str
     status: str
     summary: Optional[str] = None
-    vehicle_plate: Optional[str] = None
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
-    schedule_start_tolerance: int
-    schedule_end_tolerance: int
+    license_plate: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    start_tolerance: int
+    end_tolerance: int
     custom_data: Optional[Dict[str, Any]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -254,12 +269,12 @@ def create_appointments(
             user_tax_id=driver.tax_id,
             ref=item.appointment.ref,
             layout_ref=item.appointment.layout_ref,
-            schedule_start_tolerance=item.appointment.schedule_start_tolerance,
-            schedule_end_tolerance=item.appointment.schedule_end_tolerance,
-            schedule_start_time=item.appointment.schedule_start_time, 
-            schedule_end_time=item.appointment.schedule_end_time,
+            start_tolerance=item.appointment.start_tolerance,
+            end_tolerance=item.appointment.end_tolerance,
+            window_start=item.appointment.window_start, 
+            window_end=item.appointment.window_end,
             summary=item.appointment.summary,
-            vehicle_plate=item.appointment.vehicle_plate,
+            license_plate=item.appointment.license_plate,
             custom_data=item.appointment.custom_data,
         )
         db.add(appt)
@@ -272,16 +287,43 @@ def create_appointments(
             event="created",
             message="Agendamento criado via API.",
             data={
-                "ref": appt.ref,
-                "vehicle_plate": appt.vehicle_plate,
-                "schedule_start_time": appt.schedule_start_time.isoformat() if appt.schedule_start_time else None,
-                "schedule_end_time": appt.schedule_end_time.isoformat() if appt.schedule_end_time else None,
+                "license_plate": appt.license_plate,
+                "window_start": appt.window_start.isoformat() if appt.window_start else None,
+                "window_end": appt.window_end.isoformat() if appt.window_end else None,
             }
         )
         created_refs.append(appt.ref)
 
     try:
         db.commit()
+
+        # --- PUSH NOTIFICATIONS: Notifica cada motorista sobre o novo agendamento ---
+        # Disparado depois do commit, de forma não-bloqueante.
+        # Erros de push nunca afetam a resposta da API.
+        try:
+            from app.core.firebase import notify_user_by_tax_id
+            # Re-query para ter acesso ao terminal name após o commit
+            terminal_name = company.name or "terminal"
+
+            for item in items:
+                driver_tax_id = item.driver.tax_id
+                start = item.appointment.window_start
+                date_label = (
+                    start.strftime("%d/%m às %H:%M")
+                    if start else "em breve"
+                )
+                notify_user_by_tax_id(
+                    db, driver_tax_id,
+                    "📅 Novo agendamento",
+                    f"Você tem um agendamento em {terminal_name} {date_label}.",
+                    data={
+                        "type": "SCHEDULED_CREATED",
+                        "ref": item.appointment.ref,
+                    },
+                )
+        except Exception as push_err:
+            logger.warning(f"[push] Falha ao notificar criação de agendamento: {push_err}")
+
         return {"success": True, "data": {"created_refs": created_refs, "status": "created"}}
     except Exception as e:
         db.rollback()
@@ -371,6 +413,43 @@ def update_appointments(
 
     try:
         db.commit()
+
+        # --- PUSH NOTIFICATIONS: Notifica motoristas sobre a atualização ---
+        try:
+            from app.core.firebase import notify_user_by_tax_id
+            terminal_name = company.name or "terminal"
+
+            for ref in updated_refs:
+                appt = appt_map.get(ref)
+                if not appt or not appt.user_tax_id:
+                    continue
+
+                # Detecta se o update mudou horário ou apenas dados de exibição
+                updated_fields = set(items[[i.ref for i in items].index(ref)].appointment.keys())
+                time_fields = {"window_start", "window_end",
+                               "start_tolerance", "end_tolerance"}
+
+                if time_fields & updated_fields:
+                    # Horário alterado
+                    start = appt.window_start
+                    date_label = start.strftime("%d/%m às %H:%M") if start else "em breve"
+                    notify_user_by_tax_id(
+                        db, appt.user_tax_id,
+                        "⏰ Horário alterado",
+                        f"Seu agendamento em {terminal_name} foi reagendado para {date_label}.",
+                        data={"type": "SCHEDULED_UPDATE", "ref": ref, "change": "time"},
+                    )
+                else:
+                    # Apenas dados de exibição alterados
+                    notify_user_by_tax_id(
+                        db, appt.user_tax_id,
+                        "🔄 Dados atualizados",
+                        f"Os detalhes do seu agendamento em {terminal_name} foram atualizados.",
+                        data={"type": "SCHEDULED_UPDATE", "ref": ref, "change": "display"},
+                    )
+        except Exception as push_err:
+            logger.warning(f"[push] Falha ao notificar atualização de agendamento: {push_err}")
+
         return {"success": True, "data": {"updated_refs": updated_refs, "status": "updated"}}
     except Exception as e:
         db.rollback()
@@ -421,6 +500,7 @@ def delete_appointments(
         )
 
     for appt in appts:
+        appt.is_active = False
         appt.status = "DELETED"
         create_appointment_log(
             db=db,
@@ -432,6 +512,22 @@ def delete_appointments(
         )
 
     db.commit()
+
+    # --- PUSH NOTIFICATIONS: Notifica motoristas sobre o cancelamento ---
+    try:
+        from app.core.firebase import notify_user_by_tax_id
+        terminal_name = company.name or "terminal"
+        for appt in appts:
+            if appt.user_tax_id:
+                notify_user_by_tax_id(
+                    db, appt.user_tax_id,
+                    "❌ Agendamento cancelado",
+                    f"Seu agendamento em {terminal_name} foi cancelado.",
+                    data={"type": "CANCELLED", "ref": appt.ref},
+                )
+    except Exception as push_err:
+        logger.warning(f"[push] Falha ao notificar cancelamento de agendamento: {push_err}")
+
     return {"success": True, "data": {"deleted_count": len(appts), "status": "deleted"}}
 
 
@@ -504,11 +600,11 @@ def get_appointments_logs(
             "user_tax_id": appt.user_tax_id,
             "status": appt.status,
             "summary": appt.summary,
-            "vehicle_plate": appt.vehicle_plate,
-            "schedule_start_time": appt.schedule_start_time.isoformat() if appt.schedule_start_time else None,
-            "schedule_end_time": appt.schedule_end_time.isoformat() if appt.schedule_end_time else None,
-            "schedule_start_tolerance": appt.schedule_start_tolerance,
-            "schedule_end_tolerance": appt.schedule_end_tolerance,
+            "license_plate": appt.license_plate,
+            "window_start": appt.window_start.isoformat() if appt.window_start else None,
+            "window_end": appt.window_end.isoformat() if appt.window_end else None,
+            "start_tolerance": appt.start_tolerance,
+            "end_tolerance": appt.end_tolerance,
             "custom_data": appt.custom_data,
             "created_at": appt.created_at.isoformat() if appt.created_at else None,
             "updated_at": appt.updated_at.isoformat() if appt.updated_at else None
@@ -537,3 +633,82 @@ def get_appointments_logs(
         })
 
     return {"success": True, "data": result}
+
+
+@router.post(
+    "/appointments/ping",
+    response_model=PingAppointmentsResponse,
+    summary="Pingar Agendamento(s) pelo Terminal",
+    description="Registra um ping do terminal indicando que o agendamento permanece ativo. Atualiza o timestamp de last_ping_at para evitar desativação por tempo limite de inatividade (2 horas)."
+)
+def ping_appointments(
+    payload: PingAppointmentsPayload,
+    db: Session = Depends(get_db),
+    company: Company = Depends(get_company_from_api_key)
+):
+    """
+    Updates last_ping_at timestamp for specified appointments (by ref or ID).
+    Rensews the 2-hour activity window for terminal check-ins and active operations.
+    """
+    if not payload.appointment_refs and not payload.appointment_ids:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "EMPTY_PAYLOAD", "message": "Forneça 'appointment_refs' ou 'appointment_ids' no corpo da requisição."}
+        )
+
+    filters = [Appointment.terminal_id == company.id]
+    id_or_ref_filters = []
+    
+    if payload.appointment_refs:
+        id_or_ref_filters.append(Appointment.ref.in_(payload.appointment_refs))
+    
+    if payload.appointment_ids:
+        valid_uuids = []
+        for raw_id in payload.appointment_ids:
+            try:
+                valid_uuids.append(uuid.UUID(raw_id))
+            except ValueError:
+                pass
+        if valid_uuids:
+            id_or_ref_filters.append(Appointment.id.in_(valid_uuids))
+
+    if id_or_ref_filters:
+        from sqlalchemy import or_
+        filters.append(or_(*id_or_ref_filters))
+
+    appts = db.query(Appointment).filter(*filters).all()
+
+    if not appts:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Nenhum agendamento correspondente foi encontrado para esta empresa."}
+        )
+
+    now = datetime.now(timezone.utc)
+    pinged_refs = []
+
+    for appt in appts:
+        appt.last_ping_at = now
+        appt.updated_at = now
+        ref_label = appt.ref or str(appt.id)
+        pinged_refs.append(ref_label)
+
+        db.add(AppointmentLog(
+            company_id=company.id,
+            appointment_id=appt.id,
+            event="terminal_ping",
+            message=f"Terminal pingou o agendamento {ref_label}. Manutenção de status ativo.",
+            json={"pinged_at": now.isoformat(), "status": appt.status}
+        ))
+
+    db.commit()
+
+    return {
+        "success": True,
+        "data": {
+            "pinged_count": len(pinged_refs),
+            "pinged_refs": pinged_refs,
+            "pinged_at": now.isoformat()
+        }
+    }
+

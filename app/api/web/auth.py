@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+import secrets as secrets_module
 
 from app.core.database import get_db
 from app.core.security import verify_secret, generate_jwt, hash_secret
-from app.core.dependencies import get_current_company_user
-from app.models import CompanyUser
+from app.core.dependencies import get_current_company_user, get_current_admin_company_user
+from app.models import CompanyUser, StagingPassword
 from app.schemas.auth import WebLoginRequest, WebDevResetPasswordRequest
 from config import settings
+
 
 router = APIRouter()
 
@@ -152,3 +154,111 @@ def dev_reset_password(body: WebDevResetPasswordRequest, db: Session = Depends(g
     db.commit()
 
     return {"success": True, "message": "Senha alterada com sucesso."}
+
+
+# ─── STAGING: Geração de Senha Mestra ────────────────────────────────────────
+
+class StagingPasswordResponse(BaseModel):
+    """Resposta com a senha mestra gerada (exibida apenas uma vez)."""
+    success: bool = True
+    data: Dict[str, Any]
+
+
+@router.post(
+    "/staging/password/generate",
+    response_model=StagingPasswordResponse,
+    summary="Gerar Senha Mestra de Homologação",
+    description=(
+        "Gera (ou regenera) a senha mestra de homologação para a empresa do usuário logado. "
+        "A senha é retornada em texto plano APENAS nesta resposta — não é armazenada em texto. "
+        "Disponível SOMENTE em ambiente de homologação (PROD=False) e requer perfil de admin. "
+        "Ao gerar uma nova senha, a anterior é automaticamente revogada."
+    )
+)
+def generate_staging_password(
+    db: Session = Depends(get_db),
+    current_user: CompanyUser = Depends(get_current_admin_company_user)
+):
+    """
+    Gera uma senha mestra criptograficamente segura vinculada à empresa.
+    Faz upsert: se já existir, substitui a anterior.
+    """
+    if settings.IS_PROD:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Esta funcionalidade só está disponível no ambiente de homologação (PROD=False)."
+            }
+        )
+
+    # Gera senha forte: UUID + token seguro = difícil de reproduzir por força bruta
+    raw_password = secrets_module.token_urlsafe(32)
+    password_hash = hash_secret(raw_password)
+
+    # Upsert: uma empresa só pode ter uma staging password ativa
+    existing = db.query(StagingPassword).filter_by(
+        company_id=current_user.company_id
+    ).first()
+
+    if existing:
+        existing.password_hash = password_hash
+    else:
+        new_record = StagingPassword(
+            company_id=current_user.company_id,
+            password_hash=password_hash
+        )
+        db.add(new_record)
+
+    db.commit()
+
+    return {
+        "success": True,
+        "data": {
+            "staging_password": raw_password,
+            "message": (
+                "Guarde esta senha com segurança. "
+                "Ela não poderá ser recuperada — apenas regerada, o que revogará a atual."
+            ),
+            "company_id": str(current_user.company_id)
+        }
+    }
+
+
+@router.get(
+    "/staging/password/status",
+    summary="Status da Senha Mestra de Homologação",
+    description=(
+        "Verifica se a empresa já possui uma senha mestra de homologação ativa. "
+        "Não retorna a senha — apenas informa se existe e quando foi gerada. "
+        "Disponível SOMENTE em ambiente de homologação (PROD=False)."
+    )
+)
+def get_staging_password_status(
+    db: Session = Depends(get_db),
+    current_user: CompanyUser = Depends(get_current_admin_company_user)
+):
+    """
+    Retorna o status da senha mestra de staging para a empresa logada.
+    """
+    if settings.IS_PROD:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Esta funcionalidade só está disponível no ambiente de homologação (PROD=False)."
+            }
+        )
+
+    existing = db.query(StagingPassword).filter_by(
+        company_id=current_user.company_id
+    ).first()
+
+    return {
+        "success": True,
+        "data": {
+            "has_password": existing is not None,
+            "generated_at": existing.created_at.isoformat() if existing else None,
+            "updated_at": existing.updated_at.isoformat() if existing else None,
+        }
+    }

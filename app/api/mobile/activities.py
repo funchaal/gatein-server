@@ -1,7 +1,8 @@
 import uuid
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session, joinedload
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -32,11 +33,11 @@ class AppointmentResponseSchema(BaseModel):
     layout_ref: Optional[str] = None
     status: str
     summary: Optional[str] = None
-    vehicle_plate: Optional[str] = None
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
-    schedule_start_tolerance: int
-    schedule_end_tolerance: int
+    license_plate: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    start_tolerance: int
+    end_tolerance: int
     custom_data: Optional[Dict[str, Any]] = None
     tickets: List[TicketResponseSchema]
 
@@ -60,11 +61,11 @@ class TripResponseSchema(BaseModel):
     layout_ref: Optional[str] = None
     status: str
     summary: Optional[str] = None
-    vehicle_plate: Optional[str] = None
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
-    schedule_start_tolerance: int
-    schedule_end_tolerance: int
+    license_plate: Optional[str] = None
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    start_tolerance: int
+    end_tolerance: int
     custom_data: Optional[Dict[str, Any]] = None
     from_: Optional[str] = Field(None, serialization_alias="from", validation_alias="from")
     to: Optional[str] = None
@@ -154,11 +155,11 @@ def serialize_appointment(a) -> dict:
         "layout_ref": a.layout_ref,
         "status": a.status,
         "summary": a.summary,
-        "vehicle_plate": a.vehicle_plate,
-        "schedule_start_time": a.schedule_start_time.isoformat() if a.schedule_start_time else None,
-        "schedule_end_time": a.schedule_end_time.isoformat() if a.schedule_end_time else None,
-        "schedule_start_tolerance": a.schedule_start_tolerance,
-        "schedule_end_tolerance": a.schedule_end_tolerance,
+        "license_plate": a.license_plate,
+        "window_start": a.window_start.isoformat() if a.window_start else None,
+        "window_end": a.window_end.isoformat() if a.window_end else None,
+        "start_tolerance": a.start_tolerance,
+        "end_tolerance": a.end_tolerance,
         "custom_data": a.custom_data,
         "tickets": [serialize_ticket(t) for t in a.tickets]
     }
@@ -173,11 +174,11 @@ def serialize_trip(t) -> dict:
         "layout_ref": t.layout_ref,
         "status": t.status,
         "summary": t.summary,
-        "vehicle_plate": t.vehicle_plate,
-        "schedule_start_time": t.schedule_start_time.isoformat() if t.schedule_start_time else None,
-        "schedule_end_time": t.schedule_end_time.isoformat() if t.schedule_end_time else None,
-        "schedule_start_tolerance": t.schedule_start_tolerance,
-        "schedule_end_tolerance": t.schedule_end_tolerance,
+        "license_plate": t.license_plate,
+        "window_start": t.window_start.isoformat() if t.window_start else None,
+        "window_end": t.window_end.isoformat() if t.window_end else None,
+        "start_tolerance": t.start_tolerance,
+        "end_tolerance": t.end_tolerance,
         "custom_data": t.custom_data,
         "from": t.from_location,
         "to": t.to_location,
@@ -258,28 +259,76 @@ def get_activities(
     appt_filters = [Appointment.user_tax_id == current_user.tax_id, Appointment.status != "DELETED"]
     trip_filters = [Trip.driver_id == current_user.driver_id, Trip.status != "DELETED"]
 
+    now_utc = datetime.now(timezone.utc)
+    twelve_hours_ago = now_utc - timedelta(hours=12)
+    active_statuses = ["ACTIVE", "ON_GOING", "CHECKED-IN", "PAUSED", "PLANNED"]
+
     if status_filter == "active":
-        active_statuses = ["SCHEDULED", "IN_PROGRESS", "CHECKED_IN", "PLANNED"]
-        appt_filters.append(Appointment.status.in_(active_statuses))
-        trip_filters.append(Trip.status.in_(active_statuses))
+        # Atividades: exibe ativos E desativados há menos de 12 horas
+        appt_filters.append(
+            or_(
+                Appointment.status.in_(active_statuses),
+                and_(
+                    Appointment.status == "DEACTIVATED",
+                    or_(
+                        Appointment.deactivated_at >= twelve_hours_ago,
+                        and_(Appointment.deactivated_at == None, Appointment.updated_at >= twelve_hours_ago)
+                    )
+                )
+            )
+        )
+        trip_filters.append(
+            or_(
+                Trip.status.in_(active_statuses),
+                and_(
+                    Trip.status == "DEACTIVATED",
+                    Trip.updated_at >= twelve_hours_ago
+                )
+            )
+        )
     elif status_filter == "history":
-        history_statuses = ["COMPLETED", "CANCELLED", "NO_SHOW"]
-        appt_filters.append(Appointment.status.in_(history_statuses))
-        trip_filters.append(Trip.status.in_(history_statuses))
+        # Histórico: exibe não-ativos E desativados há mais de 12 horas
+        appt_filters.append(
+            and_(
+                Appointment.status.notin_(active_statuses),
+                or_(
+                    Appointment.status != "DEACTIVATED",
+                    and_(
+                        Appointment.status == "DEACTIVATED",
+                        or_(
+                            Appointment.deactivated_at < twelve_hours_ago,
+                            and_(Appointment.deactivated_at == None, Appointment.updated_at < twelve_hours_ago)
+                        )
+                    )
+                )
+            )
+        )
+        trip_filters.append(
+            and_(
+                Trip.status.notin_(active_statuses),
+                or_(
+                    Trip.status != "DEACTIVATED",
+                    and_(
+                        Trip.status == "DEACTIVATED",
+                        Trip.updated_at < twelve_hours_ago
+                    )
+                )
+            )
+        )
 
     if start_date:
-        appt_filters.append(Appointment.schedule_start_time >= start_date)
-        trip_filters.append(Trip.schedule_start_time >= start_date)
+        appt_filters.append(Appointment.window_start >= start_date)
+        trip_filters.append(Trip.window_start >= start_date)
     if end_date:
-        appt_filters.append(Appointment.schedule_start_time <= end_date)
-        trip_filters.append(Trip.schedule_start_time <= end_date)
+        appt_filters.append(Appointment.window_start <= end_date)
+        trip_filters.append(Trip.window_start <= end_date)
 
     # 2. Optimized Queries (Fetching limit + 1 to determine paging availability)
     appointments = (
         db.query(Appointment)
         .options(joinedload(Appointment.tickets))
         .filter(*appt_filters)
-        .order_by(Appointment.schedule_start_time.asc())
+        .order_by(Appointment.window_start.asc())
         .limit(limit + 1)
         .offset(offset)
         .all()
@@ -288,7 +337,7 @@ def get_activities(
     trips = (
         db.query(Trip)
         .filter(*trip_filters)
-        .order_by(Trip.schedule_start_time.asc())
+        .order_by(Trip.window_start.asc())
         .limit(limit + 1)
         .offset(offset)
         .all()

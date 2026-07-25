@@ -265,7 +265,7 @@ def get_initial_companies(
     appointments = (
         db.query(Appointment)
         .filter(Appointment.user_tax_id == current_user.tax_id, Appointment.status != "DELETED")
-        .order_by(Appointment.schedule_start_time.desc())
+        .order_by(Appointment.window_start.desc())
         .all()
     )
     
@@ -280,7 +280,7 @@ def get_initial_companies(
         trips = (
             db.query(Trip)
             .filter(Trip.driver_id == current_user.driver_id, Trip.status != "DELETED")
-            .order_by(Trip.schedule_start_time.desc())
+            .order_by(Trip.window_start.desc())
             .all()
         )
         
@@ -292,11 +292,11 @@ def get_initial_companies(
     # 3. Combine appointments and trips to sort by recent activities
     combined = []
     for a in appointments:
-        if a.terminal_id and a.schedule_start_time:
-            combined.append((a.terminal_id, a.schedule_start_time))
+        if a.terminal_id and a.window_start:
+            combined.append((a.terminal_id, a.window_start))
     for t in trips:
-        if t.trucking_company_id and t.schedule_start_time:
-            combined.append((t.trucking_company_id, t.schedule_start_time))
+        if t.trucking_company_id and t.window_start:
+            combined.append((t.trucking_company_id, t.window_start))
             
     combined.sort(key=lambda x: x[1], reverse=True)
     

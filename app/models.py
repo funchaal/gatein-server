@@ -4,12 +4,13 @@ from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime, Date, 
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.core.active import ActiveModelMixin
 from sqlalchemy import Text
 
 
 # --- MODELO BASE COM HERANÇA ---
 
-class Company(Base):
+class Company(Base, ActiveModelMixin):
     __tablename__ = 'companies'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -83,7 +84,7 @@ class TruckingCompany(Company):
 
 # --- OUTROS MODELOS ---
 
-class Driver(Base):
+class Driver(Base, ActiveModelMixin):
     __tablename__ = 'drivers'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -100,7 +101,7 @@ class Driver(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
-class User(Base):
+class User(Base, ActiveModelMixin):
     __tablename__ = 'users'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -117,8 +118,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    fcm_tokens = relationship("UserFCMToken", back_populates="user", cascade="all, delete-orphan")
 
-class RegisterRequest(Base):
+
+class RegisterRequest(Base, ActiveModelMixin):
     __tablename__ = 'register_requests'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -133,7 +136,7 @@ class RegisterRequest(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
-class Appointment(Base):
+class Appointment(Base, ActiveModelMixin):
     __tablename__ = 'appointments'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -145,14 +148,16 @@ class Appointment(Base):
     layout_ref = Column(String(50), nullable=True)
     
     user_tax_id = Column(String(14), index=True)
-    status = Column(String(20), default='SCHEDULED')
+    status = Column(String(20), default='ACTIVE')
     summary = Column(String(150))
-    vehicle_plate = Column(String(10), index=True)
-    schedule_start_time = Column(DateTime(timezone=True))
-    schedule_end_time = Column(DateTime(timezone=True))
-    schedule_start_tolerance = Column(Integer, default=0)
-    schedule_end_tolerance = Column(Integer, default=0)
+    license_plate = Column(String(10), index=True)
+    window_start = Column(DateTime(timezone=True))
+    window_end = Column(DateTime(timezone=True))
+    start_tolerance = Column(Integer, default=0)
+    end_tolerance = Column(Integer, default=0)
     custom_data = Column(JSONB)
+    last_ping_at = Column(DateTime(timezone=True), nullable=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -171,7 +176,7 @@ COMPANY_TYPE_MODULES = {
     'trucking_company': {'trip_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements'},
 }
 
-class CompanyUser(Base):
+class CompanyUser(Base, ActiveModelMixin):
     __tablename__ = 'companies_users'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -225,7 +230,7 @@ class CompanyUser(Base):
             return perm in ('write', 'read/write')
         return False
 
-class Ticket(Base):
+class Ticket(Base, ActiveModelMixin):
     __tablename__ = 'tickets'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -247,7 +252,7 @@ class Ticket(Base):
 
 # --- MODELOS DE LAYOUTS ---
 
-class AppointmentLayout(Base):
+class AppointmentLayout(Base, ActiveModelMixin):
     __tablename__ = 'appointments_layouts'
 
     id = Column(Integer, primary_key=True)
@@ -266,7 +271,7 @@ class AppointmentLayout(Base):
     )
 
 
-class TicketLayout(Base):
+class TicketLayout(Base, ActiveModelMixin):
     __tablename__ = 'tickets_layouts'
 
     id = Column(Integer, primary_key=True)
@@ -284,7 +289,7 @@ class TicketLayout(Base):
     )
 
 
-class TripLayout(Base):
+class TripLayout(Base, ActiveModelMixin):
     __tablename__ = 'trips_layouts'
 
     id = Column(Integer, primary_key=True)
@@ -302,7 +307,7 @@ class TripLayout(Base):
         Index('idx_trip_layout_lookup', 'trucking_company_id', 'ref', 'title'),
     )
 
-class Trip(Base):
+class Trip(Base, ActiveModelMixin):
     __tablename__ = 'trips'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -316,15 +321,15 @@ class Trip(Base):
     
     # Dados operacionais
     driver_id = Column(UUID(as_uuid=True), ForeignKey('drivers.id'), nullable=True)
-    vehicle_plate = Column(String(10), index=True)
+    license_plate = Column(String(10), index=True)
     
     status = Column(String(20), default='PLANNED')
     summary = Column(String(150))
     
-    schedule_start_time = Column(DateTime(timezone=True))
-    schedule_end_time = Column(DateTime(timezone=True))
-    schedule_start_tolerance = Column(Integer, default=0)
-    schedule_end_tolerance = Column(Integer, default=0)
+    window_start = Column(DateTime(timezone=True))
+    window_end = Column(DateTime(timezone=True))
+    start_tolerance = Column(Integer, default=0)
+    end_tolerance = Column(Integer, default=0)
     
     # Flexibilidade via layout
     custom_data = Column(JSONB, default={})
@@ -364,13 +369,12 @@ class Trip(Base):
         Index('idx_trip_company_ref', 'trucking_company_id', 'ref'),
     )
 
-class AllowedDomain(Base):
+class AllowedDomain(Base, ActiveModelMixin):
     __tablename__ = 'allowed_domains'
 
     id = Column(Integer, primary_key=True)
 
     domain = Column(String(255), unique=True, index=True, nullable=False)
-    is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -381,7 +385,7 @@ class AllowedDomain(Base):
 
 
 
-class CompanyService(Base):
+class CompanyService(Base, ActiveModelMixin):
     __tablename__ = 'company_services'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -394,8 +398,6 @@ class CompanyService(Base):
     description = Column(Text)
     url = Column(String(500), nullable=False)
     icon_url = Column(String(500))
-    
-    is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -410,7 +412,7 @@ class CompanyService(Base):
     )
 
 
-class Announcement(Base):
+class Announcement(Base, ActiveModelMixin):
     __tablename__ = 'announcements'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -421,8 +423,8 @@ class Announcement(Base):
     description = Column(Text, nullable=True)
     image_url = Column(String(500), nullable=True)
     image_position = Column(JSONB, default=dict) # stores { x: float, y: float, scale: float }
+    url = Column(String(500), nullable=True)
     
-    is_active = Column(Boolean, default=True)
     start_at = Column(DateTime(timezone=True), nullable=True)
     end_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -438,7 +440,7 @@ class Announcement(Base):
     )
 
 
-class AppointmentLog(Base):
+class AppointmentLog(Base, ActiveModelMixin):
     __tablename__ = 'appointments_logs'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -454,7 +456,7 @@ class AppointmentLog(Base):
     appointment = relationship("Appointment")
 
 
-class TripLog(Base):
+class TripLog(Base, ActiveModelMixin):
     __tablename__ = 'trips_logs'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -470,7 +472,7 @@ class TripLog(Base):
     trip = relationship("Trip")
 
 
-class AnnouncementLog(Base):
+class AnnouncementLog(Base, ActiveModelMixin):
     __tablename__ = 'announcements_logs'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -486,3 +488,87 @@ class AnnouncementLog(Base):
     announcement = relationship("Announcement")
     user = relationship("User")
     company_user = relationship("CompanyUser")
+
+
+# --- MODELO FCM TOKENS ---
+
+class UserFCMToken(Base, ActiveModelMixin):
+    """Relação N:1 entre usuário e tokens FCM de dispositivos.
+    Um usuário pode ter múltiplos dispositivos (celular, tablet, etc.).
+    O token FCM é único por dispositivo — se o app for reinstalado, o token muda.
+    """
+    __tablename__ = 'user_fcm_tokens'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+
+    # O token FCM é único globalmente — não pode haver dois registros com o mesmo token
+    fcm_token = Column(String(255), unique=True, nullable=False, index=True)
+
+    # 'android' | 'ios' — opcional, útil para diagnóstico e personalização futura
+    device_os = Column(String(10), nullable=True)
+
+    last_updated = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    user = relationship("User", back_populates="fcm_tokens")
+
+    __table_args__ = (
+        Index('idx_fcm_token_user_id', 'user_id'),
+    )
+
+
+class Notification(Base, ActiveModelMixin):
+    """Armazena o histórico de notificações de cada usuário.
+    Mantido no banco por até 7 dias.
+    """
+    __tablename__ = 'notifications'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    data = Column(JSONB, nullable=True, default=dict)
+    
+    created_at = Column(
+        DateTime(timezone=True), 
+        default=lambda: datetime.now(timezone.utc),
+        index=True
+    )
+
+    user = relationship("User")
+
+
+# --- STAGING: Senha Mestra de Homologação ---
+
+class StagingPassword(Base, ActiveModelMixin):
+    """
+    Armazena a senha mestra de homologação vinculada a uma empresa.
+    Usada apenas em ambiente de STAGING (PROD=False).
+
+    O painel web permite ao admin da empresa gerar/revogar essa senha.
+    O app mobile a utiliza no login de staging, junto ao CPF do testador,
+    para receber um JWT que inclui o company_id no payload.
+    """
+    __tablename__ = 'staging_passwords'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False, unique=True, index=True)
+
+    # Hash bcrypt da senha gerada — nunca armazene a senha em texto plano
+    password_hash = Column(String(255), nullable=False)
+
+    # Gerado apenas 1 vez por empresa; ao gerar nova, a anterior é revogada
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    company = relationship("Company")
+
+    __table_args__ = (
+        Index('idx_staging_password_company', 'company_id'),
+    )
+

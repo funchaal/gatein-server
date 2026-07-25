@@ -46,12 +46,12 @@ class TripBaseSchema(BaseModel):
     """Schema representing core parameters of a trip, including all location metrics."""
     ref: str = Field(..., description="Referência única da viagem")
     layout_ref: str = Field(..., description="Referência do layout a ser utilizado")
-    vehicle_plate: Optional[str] = Field(None, description="Placa do veículo")
+    license_plate: Optional[str] = Field(None, description="Placa do veículo")
     summary: Optional[str] = Field(None, description="Resumo ou observações sobre a viagem")
-    start_time: Optional[datetime] = Field(None, description="Data/hora prevista de início")
-    end_time: Optional[datetime] = Field(None, description="Data/hora prevista de término")
-    schedule_start_tolerance: int = Field(0, description="Tolerância de início em minutos")
-    schedule_end_tolerance: int = Field(0, description="Tolerância de término em minutos")
+    window_start: Optional[datetime] = Field(None, description="Data/hora prevista de início")
+    window_end: Optional[datetime] = Field(None, description="Data/hora prevista de término")
+    start_tolerance: int = Field(0, description="Tolerância de início em minutos")
+    end_tolerance: int = Field(0, description="Tolerância de término em minutos")
     custom_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Dados customizados estruturados")
     
     # Location/Address Details (Origin)
@@ -129,13 +129,13 @@ class TripDataResponseItem(BaseModel):
     ref: str
     layout_ref: Optional[str] = None
     driver_id: Optional[str] = None
-    vehicle_plate: Optional[str] = None
+    license_plate: Optional[str] = None
     status: str
     summary: Optional[str] = None
-    schedule_start_time: Optional[str] = None
-    schedule_end_time: Optional[str] = None
-    schedule_start_tolerance: int
-    schedule_end_tolerance: int
+    window_start: Optional[str] = None
+    window_end: Optional[str] = None
+    start_tolerance: int
+    end_tolerance: int
     custom_data: Optional[Dict[str, Any]] = None
     
     # Location/Address details (Origin)
@@ -287,12 +287,12 @@ def create_trips(
             driver_id=driver.id,
             ref=item.trip.ref,
             layout_ref=item.trip.layout_ref,
-            vehicle_plate=item.trip.vehicle_plate,
+            license_plate=item.trip.license_plate,
             summary=item.trip.summary,
-            schedule_start_time=item.trip.start_time,
-            schedule_end_time=item.trip.end_time,
-            schedule_start_tolerance=item.trip.schedule_start_tolerance,
-            schedule_end_tolerance=item.trip.schedule_end_tolerance,
+            window_start=item.trip.window_start,
+            window_end=item.trip.window_end,
+            start_tolerance=item.trip.start_tolerance,
+            end_tolerance=item.trip.end_tolerance,
             custom_data=item.trip.custom_data,
             
             # Origin fields
@@ -329,9 +329,9 @@ def create_trips(
             message="Viagem criada via API.",
             data={
                 "ref": new_trip.ref,
-                "vehicle_plate": new_trip.vehicle_plate,
-                "start_time": new_trip.schedule_start_time.isoformat() if new_trip.schedule_start_time else None,
-                "end_time": new_trip.schedule_end_time.isoformat() if new_trip.schedule_end_time else None,
+                "license_plate": new_trip.license_plate,
+                "window_start": new_trip.window_start.isoformat() if new_trip.window_start else None,
+                "window_end": new_trip.window_end.isoformat() if new_trip.window_end else None,
             }
         )
         created_refs.append(new_trip.ref)
@@ -468,6 +468,7 @@ def delete_trips(
         )
 
     for trip_obj in trips:
+        trip_obj.is_active = False
         trip_obj.status = "DELETED"
         create_trip_log(
             db=db,
@@ -549,13 +550,13 @@ def get_trips_logs(
             "ref": trip_obj.ref,
             "layout_ref": trip_obj.layout_ref,
             "driver_id": str(trip_obj.driver_id) if trip_obj.driver_id else None,
-            "vehicle_plate": trip_obj.vehicle_plate,
+            "license_plate": trip_obj.license_plate,
             "status": trip_obj.status,
             "summary": trip_obj.summary,
-            "schedule_start_time": trip_obj.schedule_start_time.isoformat() if trip_obj.schedule_start_time else None,
-            "schedule_end_time": trip_obj.schedule_end_time.isoformat() if trip_obj.schedule_end_time else None,
-            "schedule_start_tolerance": trip_obj.schedule_start_tolerance,
-            "schedule_end_tolerance": trip_obj.schedule_end_tolerance,
+            "window_start": trip_obj.window_start.isoformat() if trip_obj.window_start else None,
+            "window_end": trip_obj.window_end.isoformat() if trip_obj.window_end else None,
+            "start_tolerance": trip_obj.start_tolerance,
+            "end_tolerance": trip_obj.end_tolerance,
             "custom_data": trip_obj.custom_data,
             
             # Origin fields

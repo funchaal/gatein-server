@@ -14,6 +14,19 @@ class Settings(BaseSettings):
 
     SUPER_ADMIN_SECRET: str = "senha_super_secreta_de_fallback_apenas_para_dev"
 
+    # Caminho para o arquivo JSON da chave privada do Firebase Admin SDK
+    # Gerado em: Firebase Console → Configurações do Projeto → Contas de Serviço
+    FIREBASE_CREDENTIALS_PATH: str = "serviceAccountKey.json"
+
+    # ─── Ambiente ────────────────────────────────────────────────────────────
+    # True  → Produção  (regras de isolamento multi-tenant INATIVAS)
+    # False → Staging   (regras de isolamento multi-tenant ATIVAS via ORM event)
+    PROD: bool = True
+
+    @property
+    def IS_PROD(self) -> bool:
+        return self.PROD
+
     @property
     def JWT_EXPIRATION_DELTA_MOBILE(self) -> timedelta:
         return timedelta(days=self.JWT_EXPIRATION_DAYS_MOBILE)
@@ -26,4 +39,4 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
-settings = Settings()
+settings = Settings()

@@ -26,6 +26,7 @@ class MobileAnnouncementResponseData(BaseModel):
     company_name: str
     company_branch_name: Optional[str]
     company_logo_url: Optional[str]
+    url: Optional[str] = None
 
 class MobileAnnouncementListResponse(BaseModel):
     """Schema representing the list response of active announcements."""
@@ -138,25 +139,79 @@ def get_mobile_announcements(
             if nid:
                 company_ids.add(nid)
 
-    # 4. Buscar avisos ativos para o conjunto de empresas encontradas
-    now = datetime.now(timezone.utc)
-    
-    # Se a lista de empresas estiver vazia, não há avisos para retornar
+    # 4. Buscar todos os avisos ativos (is_active == True) das empresas encontradas
     if not company_ids:
         return {"success": True, "data": []}
 
+    now = datetime.now(timezone.utc)
+
+    # Buscamos todos os anúncios onde is_active == True, ordenados por created_at asc
     announcements = db.query(Announcement).join(
         Company, Announcement.company_id == Company.id
     ).filter(
         Announcement.company_id.in_(list(company_ids)),
-        Announcement.is_active == True,
-        or_(Announcement.start_at.is_(None), Announcement.start_at <= now),
-        or_(Announcement.end_at.is_(None), Announcement.end_at >= now)
-    ).order_by(Announcement.created_at.desc()).all()
+        Announcement.is_active == True
+    ).order_by(Announcement.created_at.asc()).all()
+
+    # Auxiliar para garantir fuso horário UTC consciente
+    def to_utc(dt):
+        if dt is None:
+            return None
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+    # Agrupar anúncios por empresa
+    by_company = {}
+    for a in announcements:
+        by_company.setdefault(a.company_id, []).append(a)
+
+    active_announcements = []
+
+    for cid, company_anns in by_company.items():
+        # Definir a data/hora de ativação (start_at se houver, caso contrário created_at)
+        for a in company_anns:
+            start_val = to_utc(a.start_at)
+            created_val = to_utc(a.created_at)
+            a.activation_time = start_val if start_val is not None else created_val
+
+        # Ordenar os anúncios por tempo de ativação
+        company_anns.sort(key=lambda x: (x.activation_time, to_utc(x.created_at) or x.activation_time))
+
+        active_set = []
+        for a in company_anns:
+            t_act = a.activation_time
+            end_val = to_utc(a.end_at)
+            
+            # Limpar o active_set de anúncios que expiraram antes de a.activation_time
+            active_set = [
+                x for x in active_set
+                if x.end_at is None or to_utc(x.end_at) >= t_act
+            ]
+
+            # Se o próprio anúncio expirou antes de ser ativado, ignorar
+            if end_val is not None and end_val < t_act:
+                continue
+
+            # Tenta ativar se a quantidade de anúncios ativos da empresa no momento for menor que 3
+            if len(active_set) < 3:
+                active_set.append(a)
+
+        # Do conjunto final de anúncios ativados, manter apenas aqueles que estão ativos *agora*
+        for a in active_set:
+            start_val = to_utc(a.start_at)
+            end_val = to_utc(a.end_at)
+            
+            is_start_valid = start_val is None or start_val <= now
+            is_end_valid = end_val is None or end_val >= now
+            
+            if is_start_valid and is_end_valid:
+                active_announcements.append(a)
+
+    # Ordena o resultado final por created_at desc (mesma ordenação original)
+    active_announcements.sort(key=lambda x: to_utc(x.created_at) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
     # 5. Formatar a resposta
     response_data = []
-    for a in announcements:
+    for a in active_announcements:
         comp = a.company
         logo = None
         if comp and comp.config:
@@ -172,7 +227,8 @@ def get_mobile_announcements(
             "image_position": a.image_position or {"x": 50, "y": 50},
             "company_name": comp.name if comp else "",
             "company_branch_name": comp.branch_name if comp else None,
-            "company_logo_url": logo
+            "company_logo_url": logo,
+            "url": a.url
         })
 
     return {"success": True, "data": response_data}

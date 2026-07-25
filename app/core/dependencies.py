@@ -5,6 +5,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from app.core.database import get_db
 from app.models import Company, User, CompanyUser
 from app.core.security import verify_secret, APIKeyManager
+from app.core.tenant import current_company_id_ctx
 from config import settings
 import secrets
 
@@ -154,3 +155,47 @@ def require_permission(module: str, action: str = 'write'):
             )
         return current_user
     return dependency
+
+
+# ─── Dependency: Tenant Context (STAGING ONLY) ───────────────────────────────
+
+def set_tenant_context(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    x_device_id: str = Header(..., alias="X-Device-ID"),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Dependency para rotas mobile em ambiente de STAGING (PROD=False).
+
+    Além de autenticar o usuário (igual ao get_current_user), extrai o
+    `company_id` embutido no JWT de staging e o injeta no ContextVar
+    `current_company_id_ctx`. Isso ativa o filtro ORM automático de
+    isolamento por empresa para toda a duração da requisição.
+
+    Em PROD, o company_id não estará no token e o ContextVar permanece None,
+    portanto o event listener nunca dispara (fica inativo de qualquer forma).
+
+    Use esta dependency em substituição ao `get_current_user` em ambientes
+    onde o isolamento multi-tenant deve estar ativo.
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail={"code": "EXPIRED_TOKEN"})
+    except JWTError:
+        raise HTTPException(status_code=401, detail={"code": "INVALID_TOKEN"})
+
+    if payload.get("device_id") != x_device_id:
+        raise HTTPException(status_code=401, detail={"code": "DEVICE_MISMATCH"})
+
+    user = db.query(User).filter_by(tax_id=payload.get("tax_id")).first()
+    if not user:
+        raise HTTPException(status_code=401, detail={"code": "USER_NOT_FOUND"})
+
+    # Injeta company_id no contexto da requisição (staging apenas)
+    company_id = payload.get("company_id")
+    if company_id:
+        current_company_id_ctx.set(str(company_id))
+
+    return user

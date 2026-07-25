@@ -319,7 +319,7 @@ def delete_services(
     try:
         deleted_ids = [str(t.id) for t in targets]
         for target in targets:
-            db.delete(target)
+            target.is_active = False
         db.commit()
         return {"success": True, "data": {"status": "deleted", "ids": deleted_ids}}
     except Exception as e:

@@ -198,7 +198,7 @@ def delete_user(
         )
 
     try:
-        db.delete(target)
+        target.is_active = False
         db.commit()
         return {"success": True, "data": {"status": "deleted", "id": str(user_id)}}
     except Exception as e:

@@ -34,11 +34,12 @@ def create_announcement_log(db: Session, announcement_id: Any, company_user_id: 
 # --- SCHEMAS ---
 
 class AnnouncementCreateRequest(BaseModel):
-    title: str = Field(..., max_length=100)
+    title: Optional[str] = Field("Aviso", max_length=100)
     subtitle: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = Field(None, max_length=250)
     image_url: Optional[str] = Field(None, max_length=500)
     image_position: Optional[Dict[str, Any]] = None
+    url: Optional[str] = Field(None, max_length=500)
     is_active: bool = True
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
@@ -49,6 +50,7 @@ class AnnouncementUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=250)
     image_url: Optional[str] = Field(None, max_length=500)
     image_position: Optional[Dict[str, Any]] = None
+    url: Optional[str] = Field(None, max_length=500)
     is_active: Optional[bool] = None
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
@@ -64,6 +66,7 @@ class AnnouncementResponseData(BaseModel):
     description: Optional[str]
     image_url: Optional[str]
     image_position: Dict[str, Any]
+    url: Optional[str] = None
     is_active: bool
     start_at: Optional[str]
     end_at: Optional[str]
@@ -110,6 +113,7 @@ def get_announcements(
             "description": a.description,
             "image_url": a.image_url,
             "image_position": a.image_position or {"x": 50, "y": 50},
+            "url": a.url,
             "is_active": a.is_active,
             "start_at": a.start_at.isoformat() if a.start_at else None,
             "end_at": a.end_at.isoformat() if a.end_at else None,
@@ -127,11 +131,12 @@ def create_announcement(
     try:
         new_announcement = Announcement(
             company_id=current_user.company_id,
-            title=body.title,
+            title=body.title or "Aviso",
             subtitle=body.subtitle,
             description=body.description,
             image_url=body.image_url,
             image_position=body.image_position or {"x": 50, "y": 50},
+            url=body.url,
             is_active=body.is_active,
             start_at=body.start_at,
             end_at=body.end_at
@@ -162,6 +167,7 @@ def create_announcement(
                 "description": new_announcement.description,
                 "image_url": new_announcement.image_url,
                 "image_position": new_announcement.image_position or {"x": 50, "y": 50},
+                "url": new_announcement.url,
                 "is_active": new_announcement.is_active,
                 "start_at": new_announcement.start_at.isoformat() if new_announcement.start_at else None,
                 "end_at": new_announcement.end_at.isoformat() if new_announcement.end_at else None,
@@ -195,6 +201,7 @@ def update_announcement(
         if body.description is not None:    target.description = body.description
         if body.image_url is not None:      target.image_url = body.image_url
         if body.image_position is not None: target.image_position = body.image_position
+        if body.url is not None:            target.url = body.url
         if body.is_active is not None:      target.is_active = body.is_active
         if body.start_at is not None:        target.start_at = body.start_at
         if body.end_at is not None:          target.end_at = body.end_at
@@ -220,6 +227,7 @@ def update_announcement(
                 "description": target.description,
                 "image_url": target.image_url,
                 "image_position": target.image_position or {"x": 50, "y": 50},
+                "url": target.url,
                 "is_active": target.is_active,
                 "start_at": target.start_at.isoformat() if target.start_at else None,
                 "end_at": target.end_at.isoformat() if target.end_at else None,
@@ -313,8 +321,8 @@ def delete_announcement(
             message="Aviso excluído pelo operador.",
             data={"title": target.title}
         )
+        target.is_active = False
         db.flush()
-        db.delete(target)
         db.commit()
         return {"success": True, "data": {"status": "deleted", "id": str(announcement_id)}}
     except Exception as e:
