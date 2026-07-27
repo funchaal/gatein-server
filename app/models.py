@@ -1,11 +1,41 @@
-import uuid
+import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, Integer, Float, DateTime, Date, ForeignKey, Index, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, Boolean, Integer, BigInteger, Float, DateTime, Date, ForeignKey, Index, UniqueConstraint, text, Enum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 from app.core.active import ActiveModelMixin
 from sqlalchemy import Text
+
+
+# --- ENUMS DE EVENTOS DE LOG ---
+
+class AppointmentEvent(str, enum.Enum):
+    CREATED = "created"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    TICKET_CREATED = "ticket_created"
+    TICKET_UPDATED = "ticket_updated"
+    TICKET_DELETED = "ticket_deleted"
+    TERMINAL_PING = "terminal_ping"
+    NOTIFICATION_SENT = "notification_sent"
+    AUTO_DEACTIVATED = "auto_deactivated"
+    CHECKIN_CANCELLED = "checkin_cancelled"
+    VIEWED = "viewed"
+    CLICKED = "clicked"
+
+class TripEvent(str, enum.Enum):
+    CREATED = "created"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    VIEWED = "viewed"
+    CLICKED = "clicked"
+
+class AnnouncementEvent(str, enum.Enum):
+    CREATED = "created"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    VIEWED = "viewed"
 
 
 # --- MODELO BASE COM HERANÇA ---
@@ -13,7 +43,7 @@ from sqlalchemy import Text
 class Company(Base, ActiveModelMixin):
     __tablename__ = 'companies'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     type = Column(String(20), nullable=False)  # 'terminal' ou 'trucking_company'
     
     username = Column(String(50), unique=True, nullable=False)
@@ -60,7 +90,7 @@ class Company(Base, ActiveModelMixin):
 class Terminal(Company):
     __tablename__ = 'terminals'
 
-    id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), primary_key=True)
+    id = Column(BigInteger, ForeignKey('companies.id'), primary_key=True)
     
     geofence = Column(JSONB, default={})
     appointment_layouts = Column(JSONB, default={})
@@ -75,7 +105,7 @@ class Terminal(Company):
 class TruckingCompany(Company):
     __tablename__ = 'trucking_companies'
 
-    id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), primary_key=True)
+    id = Column(BigInteger, ForeignKey('companies.id'), primary_key=True)
     
     trip_layouts = Column(JSONB, default={})
 
@@ -89,14 +119,14 @@ class TruckingCompany(Company):
 class Driver(Base, ActiveModelMixin):
     __tablename__ = 'drivers'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     tax_id = Column(String(14), unique=True, index=True, nullable=False)
     driver_license_number = Column(String(20))
     driver_license_category = Column(String(10))
     driver_license_expiration = Column(Date)
 
     # FK correta apontando para a tabela base
-    validated_by = Column(UUID(as_uuid=True), ForeignKey('companies.id'))
+    validated_by = Column(BigInteger, ForeignKey('companies.id'))
     validated_by_company = relationship("Company")
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -106,7 +136,7 @@ class Driver(Base, ActiveModelMixin):
 class User(Base, ActiveModelMixin):
     __tablename__ = 'users'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     tax_id = Column(String(14), unique=True, nullable=False)
     name = Column(String(100))
     phone = Column(String(20))
@@ -115,7 +145,7 @@ class User(Base, ActiveModelMixin):
 
     validated_device = Column(String(100))
 
-    driver_id = Column(UUID(as_uuid=True), ForeignKey('drivers.id'), nullable=True)
+    driver_id = Column(BigInteger, ForeignKey('drivers.id'), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -126,7 +156,7 @@ class User(Base, ActiveModelMixin):
 class RegisterRequest(Base, ActiveModelMixin):
     __tablename__ = 'register_requests'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     tax_id = Column(String(14), unique=True, index=True, nullable=False)
     name = Column(String(100))
     phone = Column(String(20))
@@ -141,10 +171,9 @@ class RegisterRequest(Base, ActiveModelMixin):
 class Appointment(Base, ActiveModelMixin):
     __tablename__ = 'appointments'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     
-    # FK corrigida (era 'terminal.id', agora é 'terminals.id')
-    terminal_id = Column(UUID(as_uuid=True), ForeignKey('terminals.id'), nullable=False)
+    terminal_id = Column(BigInteger, ForeignKey('terminals.id'), nullable=False)
     
     ref = Column(String(100), index=True, nullable=True)
     layout_ref = Column(String(50), nullable=True)
@@ -181,9 +210,9 @@ COMPANY_TYPE_MODULES = {
 class CompanyUser(Base, ActiveModelMixin):
     __tablename__ = 'companies_users'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     # FK correta apontando para a tabela base para aceitar ambos os tipos
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
 
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
@@ -235,12 +264,11 @@ class CompanyUser(Base, ActiveModelMixin):
 class Ticket(Base, ActiveModelMixin):
     __tablename__ = 'tickets'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey('appointments.id'), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    appointment_id = Column(BigInteger, ForeignKey('appointments.id'), nullable=False)
     appointment_ref = Column(String(100), nullable=False)
     
-    # FK corrigida (era 'terminal.id', agora é 'terminals.id')
-    terminal_id = Column(UUID(as_uuid=True), ForeignKey('terminals.id'), nullable=False)
+    terminal_id = Column(BigInteger, ForeignKey('terminals.id'), nullable=False)
 
     layout_ref = Column(String(50), nullable=True) 
     content = Column(JSONB, nullable=False, default={})
@@ -258,8 +286,7 @@ class AppointmentLayout(Base, ActiveModelMixin):
     __tablename__ = 'appointments_layouts'
 
     id = Column(Integer, primary_key=True)
-    # FK corrigida para apontar especificamente para Terminals
-    terminal_id = Column(UUID(as_uuid=True), ForeignKey('terminals.id'), nullable=False)
+    terminal_id = Column(BigInteger, ForeignKey('terminals.id'), nullable=False)
 
     ref = Column(String(50), nullable=False)
     title = Column(String(100))
@@ -277,7 +304,7 @@ class TicketLayout(Base, ActiveModelMixin):
     __tablename__ = 'tickets_layouts'
 
     id = Column(Integer, primary_key=True)
-    terminal_id = Column(UUID(as_uuid=True), ForeignKey('terminals.id'), nullable=False)
+    terminal_id = Column(BigInteger, ForeignKey('terminals.id'), nullable=False)
 
     ref = Column(String(50), nullable=False)
     title = Column(String(100))
@@ -296,7 +323,7 @@ class TripLayout(Base, ActiveModelMixin):
 
     id = Column(Integer, primary_key=True)
     # Trips pertencem a Trucking Companies
-    trucking_company_id = Column(UUID(as_uuid=True), ForeignKey('trucking_companies.id'), nullable=False)
+    trucking_company_id = Column(BigInteger, ForeignKey('trucking_companies.id'), nullable=False)
 
     ref = Column(String(50), nullable=False)
     title = Column(String(100))
@@ -312,17 +339,17 @@ class TripLayout(Base, ActiveModelMixin):
 class Trip(Base, ActiveModelMixin):
     __tablename__ = 'trips'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     
     # Vinculado à transportadora
-    trucking_company_id = Column(UUID(as_uuid=True), ForeignKey('trucking_companies.id'), nullable=False)
+    trucking_company_id = Column(BigInteger, ForeignKey('trucking_companies.id'), nullable=False)
     
     # Referência interna da transportadora e layout
     ref = Column(String(100), index=True, nullable=True)
     layout_ref = Column(String(50), nullable=True)
     
     # Dados operacionais
-    driver_id = Column(UUID(as_uuid=True), ForeignKey('drivers.id'), nullable=True)
+    driver_id = Column(BigInteger, ForeignKey('drivers.id'), nullable=True)
     license_plate = Column(String(10), index=True)
     
     status = Column(String(20), default='PLANNED')
@@ -390,10 +417,10 @@ class AllowedDomain(Base, ActiveModelMixin):
 class CompanyService(Base, ActiveModelMixin):
     __tablename__ = 'company_services'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
     
     # Aponta para a tabela base para que tanto Terminals quanto TruckingCompanies possam ter serviços
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
     domain_id = Column(Integer, ForeignKey('allowed_domains.id'), nullable=False)
     
     title = Column(String(100), nullable=False)
@@ -417,8 +444,8 @@ class CompanyService(Base, ActiveModelMixin):
 class Announcement(Base, ActiveModelMixin):
     __tablename__ = 'announcements'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
     
     title = Column(String(100), nullable=False)
     subtitle = Column(String(150), nullable=True)
@@ -445,12 +472,12 @@ class Announcement(Base, ActiveModelMixin):
 class AppointmentLog(Base, ActiveModelMixin):
     __tablename__ = 'appointments_logs'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey('appointments.id'), nullable=False)
-    event = Column(String(100), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
+    appointment_id = Column(BigInteger, ForeignKey('appointments.id'), nullable=False)
+    event = Column(Enum(AppointmentEvent, name='appointment_event', native_enum=True), nullable=False)
     message = Column(Text, nullable=True)
-    json = Column(JSONB, nullable=True, default=dict)
+    json = Column(JSONB, nullable=True, default=None)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relacionamentos
@@ -461,12 +488,12 @@ class AppointmentLog(Base, ActiveModelMixin):
 class TripLog(Base, ActiveModelMixin):
     __tablename__ = 'trips_logs'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False)
-    trip_id = Column(UUID(as_uuid=True), ForeignKey('trips.id'), nullable=False)
-    event = Column(String(100), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
+    trip_id = Column(BigInteger, ForeignKey('trips.id'), nullable=False)
+    event = Column(Enum(TripEvent, name='trip_event', native_enum=True), nullable=False)
     message = Column(Text, nullable=True)
-    json = Column(JSONB, nullable=True, default=dict)
+    json = Column(JSONB, nullable=True, default=None)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relacionamentos
@@ -477,13 +504,13 @@ class TripLog(Base, ActiveModelMixin):
 class AnnouncementLog(Base, ActiveModelMixin):
     __tablename__ = 'announcements_logs'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    announcement_id = Column(UUID(as_uuid=True), ForeignKey('announcements.id', ondelete='CASCADE'), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True)
-    company_user_id = Column(UUID(as_uuid=True), ForeignKey('companies_users.id'), nullable=True)
-    event = Column(String(100), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    announcement_id = Column(BigInteger, ForeignKey('announcements.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=True)
+    company_user_id = Column(BigInteger, ForeignKey('companies_users.id'), nullable=True)
+    event = Column(Enum(AnnouncementEvent, name='announcement_event', native_enum=True), nullable=False)
     message = Column(Text, nullable=True)
-    json = Column(JSONB, nullable=True, default=dict)
+    json = Column(JSONB, nullable=True, default=None)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relacionamentos
@@ -501,8 +528,8 @@ class UserFCMToken(Base, ActiveModelMixin):
     """
     __tablename__ = 'user_fcm_tokens'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
 
     # O token FCM é único globalmente — não pode haver dois registros com o mesmo token
     fcm_token = Column(String(255), unique=True, nullable=False, index=True)
@@ -538,8 +565,8 @@ class StagingPassword(Base, ActiveModelMixin):
     """
     __tablename__ = 'staging_passwords'
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    company_id = Column(UUID(as_uuid=True), ForeignKey('companies.id'), nullable=False, unique=True, index=True)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False, unique=True, index=True)
 
     # Hash bcrypt da senha gerada — nunca armazene a senha em texto plano
     password_hash = Column(String(255), nullable=False)
@@ -553,4 +580,3 @@ class StagingPassword(Base, ActiveModelMixin):
     __table_args__ = (
         Index('idx_staging_password_company', 'company_id'),
     )
-

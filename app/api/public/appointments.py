@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,30 +7,22 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
-from app.models import Company, Driver, Appointment, AppointmentLog, AppointmentLayout
+from app.core.sqids import encode_id, decode_id
+from app.models import Company, Driver, Appointment, AppointmentLog, AppointmentLayout, AppointmentEvent
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # --- HELPER LOGS ---
-def create_appointment_log(db: Session, company_id: Any, appointment_id: Any, event: str, message: str, data: dict):
+def create_appointment_log(db: Session, company_id: Any, appointment_id: Any, event: AppointmentEvent):
     """
-    Utility function to log changes and events for an appointment in the database.
-    Serializes date/time elements dynamically to JSON format.
+    Utility function to log events for an appointment in the database.
+    Columns message and json are kept in schema but not populated.
     """
-    def json_serializer(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        raise TypeError(f"Type {type(obj)} not serializable")
-        
-    serialized_data = json.loads(json.dumps(data, default=json_serializer))
-    
     log = AppointmentLog(
         company_id=company_id,
         appointment_id=appointment_id,
         event=event,
-        message=message,
-        json=serialized_data
     )
     db.add(log)
 
@@ -48,33 +39,29 @@ class AppointmentBaseSchema(BaseModel):
     """Schema representing core parameters of an appointment."""
     ref: str = Field(..., description="ID ou referência única externa do agendamento")
     layout_ref: str = Field(..., description="Referência do layout de agendamento a ser aplicado")
-    window_start: Optional[datetime] = Field(None, description="Data/hora de início agendada")
-    window_end: Optional[datetime] = Field(None, description="Data/hora de término agendada")
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    license_plate: Optional[str] = None
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
     start_tolerance: int = Field(0, description="Tolerância de início em minutos")
     end_tolerance: int = Field(0, description="Tolerância de término em minutos")
-    summary: Optional[str] = Field(None, description="Resumo ou observações do agendamento")
-    license_plate: Optional[str] = Field(None, description="Placa do veículo associado")
-    custom_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metadados dinâmicos adicionais")
-
-    @model_validator(mode='after')
-    def check_dates(self) -> 'AppointmentBaseSchema':
-        """Validates that schedule end time is strictly after the start time."""
-        if self.window_start and self.window_end:
-            if self.window_end <= self.window_start:
-                raise ValueError("O horário de término deve ser após o início.")
-        return self
+    custom_data: Optional[Dict[str, Any]] = None
 
 class CreateAppointmentPayload(BaseModel):
-    """Payload to create an appointment containing driver and appointment details."""
+    """Schema for creating appointment along with driver details."""
     driver: DriverSchema
     appointment: AppointmentBaseSchema
 
-class UpdateAppointmentPayload(BaseModel):
-    """Payload to partially update an existing appointment."""
-    ref: str = Field(..., description="Referência única do agendamento que será atualizado")
-    appointment: Dict[str, Any] = Field(..., description="Objeto contendo apenas os campos a atualizar")
+class UpdateAppointmentData(BaseModel):
+    """Schema for fields that can be updated on an appointment."""
+    class Config:
+        extra = "allow"
 
-# Response Schemas
+class UpdateAppointmentPayload(BaseModel):
+    """Schema representing an update operation on an appointment."""
+    ref: str = Field(..., description="Referência do agendamento a ser atualizado")
+    appointment: Dict[str, Any]
 
 class CreateAppointmentsResponseData(BaseModel):
     created_refs: List[str]
@@ -102,7 +89,7 @@ class DeleteAppointmentsResponse(BaseModel):
 
 class PingAppointmentsPayload(BaseModel):
     appointment_refs: Optional[List[str]] = Field(None, description="Lista de referências dos agendamentos a pingar")
-    appointment_ids: Optional[List[str]] = Field(None, description="Lista de IDs UUID dos agendamentos a pingar")
+    appointment_ids: Optional[List[str]] = Field(None, description="Lista de IDs hash dos agendamentos a pingar")
 
 class PingAppointmentsResponseData(BaseModel):
     pinged_count: int
@@ -117,7 +104,7 @@ class AppointmentLogResponseItem(BaseModel):
     """Item schema representing a log trace of an appointment."""
     id: str
     event: str
-    message: str
+    message: Optional[str] = None
     json_data: Optional[Dict[str, Any]] = Field(None, validation_alias="json", serialization_alias="json")
     created_at: Optional[str] = None
 
@@ -284,13 +271,7 @@ def create_appointments(
             db=db,
             company_id=company.id,
             appointment_id=appt.id,
-            event="created",
-            message="Agendamento criado via API.",
-            data={
-                "license_plate": appt.license_plate,
-                "window_start": appt.window_start.isoformat() if appt.window_start else None,
-                "window_end": appt.window_end.isoformat() if appt.window_end else None,
-            }
+            event=AppointmentEvent.CREATED,
         )
         created_refs.append(appt.ref)
 
@@ -392,9 +373,7 @@ def update_appointments(
             db=db,
             company_id=company.id,
             appointment_id=appt.id,
-            event="updated",
-            message="Agendamento atualizado via API.",
-            data=item.appointment
+            event=AppointmentEvent.UPDATED,
         )
         
         updated_refs.append(item.ref)
@@ -506,9 +485,7 @@ def delete_appointments(
             db=db,
             company_id=company.id,
             appointment_id=appt.id,
-            event="deleted",
-            message="Agendamento deletado/cancelado.",
-            data={"ref": appt.ref, "status": "DELETED"}
+            event=AppointmentEvent.DELETED,
         )
 
     db.commit()
@@ -583,8 +560,8 @@ def get_appointments_logs(
 
         serialized_logs = [
             {
-                "id": str(log.id),
-                "event": log.event,
+                "id": encode_id(log.id),
+                "event": log.event.value if log.event else None,
                 "message": log.message,
                 "json": log.json,
                 "created_at": log.created_at.isoformat() if log.created_at else None
@@ -593,8 +570,8 @@ def get_appointments_logs(
         ]
 
         appt_data = {
-            "id": str(appt.id),
-            "terminal_id": str(appt.terminal_id),
+            "id": encode_id(appt.id),
+            "terminal_id": encode_id(appt.terminal_id),
             "ref": appt.ref,
             "layout_ref": appt.layout_ref,
             "user_tax_id": appt.user_tax_id,
@@ -663,14 +640,14 @@ def ping_appointments(
         id_or_ref_filters.append(Appointment.ref.in_(payload.appointment_refs))
     
     if payload.appointment_ids:
-        valid_uuids = []
+        valid_ids = []
         for raw_id in payload.appointment_ids:
             try:
-                valid_uuids.append(uuid.UUID(raw_id))
-            except ValueError:
+                valid_ids.append(decode_id(raw_id))
+            except (ValueError, Exception):
                 pass
-        if valid_uuids:
-            id_or_ref_filters.append(Appointment.id.in_(valid_uuids))
+        if valid_ids:
+            id_or_ref_filters.append(Appointment.id.in_(valid_ids))
 
     if id_or_ref_filters:
         from sqlalchemy import or_
@@ -690,15 +667,13 @@ def ping_appointments(
     for appt in appts:
         appt.last_ping_at = now
         appt.updated_at = now
-        ref_label = appt.ref or str(appt.id)
+        ref_label = appt.ref or encode_id(appt.id)
         pinged_refs.append(ref_label)
 
         db.add(AppointmentLog(
             company_id=company.id,
             appointment_id=appt.id,
-            event="terminal_ping",
-            message=f"Terminal pingou o agendamento {ref_label}. Manutenção de status ativo.",
-            json={"pinged_at": now.isoformat(), "status": appt.status}
+            event=AppointmentEvent.TERMINAL_PING,
         ))
 
     db.commit()
@@ -711,4 +686,3 @@ def ping_appointments(
             "pinged_at": now.isoformat()
         }
     }
-
