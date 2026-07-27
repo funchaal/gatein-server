@@ -43,9 +43,10 @@ def check_1day_reminders():
     """
     Dispara notificações para agendamentos que começam amanhã.
     Agrupa múltiplos agendamentos do mesmo dia em uma única notificação por usuário.
+    Garante envio único por agendamento.
     Roda a cada hora.
     """
-    from app.models import Appointment
+    from app.models import Appointment, AppointmentLog
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -69,9 +70,28 @@ def check_1day_reminders():
         if not appointments:
             return
 
+        appt_ids = [appt.id for appt in appointments]
+        sent_logs = (
+            db.query(AppointmentLog.appointment_id, AppointmentLog.json)
+            .filter(
+                AppointmentLog.appointment_id.in_(appt_ids),
+                AppointmentLog.event == "notification_sent",
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.appointment_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "REMINDER_1DAY"
+        }
+
+        unsent_appointments = [a for a in appointments if a.id not in already_sent_ids]
+        if not unsent_appointments:
+            return
+
         # Agrupa por usuário
         by_user: dict[str, list] = defaultdict(list)
-        for appt in appointments:
+        for appt in unsent_appointments:
             by_user[appt.user_tax_id].append(appt)
 
         for tax_id, appts in by_user.items():
@@ -92,7 +112,6 @@ def check_1day_reminders():
             )
 
             # Registra no log de cada agendamento envolvido
-            from app.models import AppointmentLog
             for appt in appts:
                 if appt.terminal_id:
                     db.add(AppointmentLog(
@@ -120,9 +139,10 @@ def check_12h_reminders():
     Dispara notificações para agendamentos que começam em ~12h.
     O data payload inclui type=COUNTDOWN e o timestamp exato de início
     para que o app exiba um countdown local.
+    Garante envio único por agendamento.
     Roda a cada 15 minutos.
     """
-    from app.models import Appointment
+    from app.models import Appointment, AppointmentLog
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -146,8 +166,27 @@ def check_12h_reminders():
         if not appointments:
             return
 
+        appt_ids = [appt.id for appt in appointments]
+        sent_logs = (
+            db.query(AppointmentLog.appointment_id, AppointmentLog.json)
+            .filter(
+                AppointmentLog.appointment_id.in_(appt_ids),
+                AppointmentLog.event == "notification_sent",
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.appointment_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "COUNTDOWN"
+        }
+
+        unsent_appointments = [a for a in appointments if a.id not in already_sent_ids]
+        if not unsent_appointments:
+            return
+
         by_user: dict[str, list] = defaultdict(list)
-        for appt in appointments:
+        for appt in unsent_appointments:
             by_user[appt.user_tax_id].append(appt)
 
         for tax_id, appts in by_user.items():
@@ -177,7 +216,6 @@ def check_12h_reminders():
             )
 
             # Registra no log de cada agendamento
-            from app.models import AppointmentLog
             for appt in appts:
                 if appt.terminal_id:
                     db.add(AppointmentLog(
@@ -204,9 +242,10 @@ def check_window_open():
     """
     Verifica agendamentos SCHEDULED que estão dentro da janela de check-in
     (window_start - tolerance até window_end + tolerance) e notifica.
+    Garante que a notificação de janela aberta seja enviada uma única vez por agendamento.
     Roda a cada 5 minutos.
     """
-    from app.models import Appointment
+    from app.models import Appointment, AppointmentLog
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -222,7 +261,29 @@ def check_window_open():
             .all()
         )
 
+        if not appointments:
+            return
+
+        appt_ids = [appt.id for appt in appointments]
+        sent_logs = (
+            db.query(AppointmentLog.appointment_id, AppointmentLog.json)
+            .filter(
+                AppointmentLog.appointment_id.in_(appt_ids),
+                AppointmentLog.event == "notification_sent",
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.appointment_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "WINDOW_OPEN"
+        }
+
+        sent_count = 0
         for appt in appointments:
+            if appt.id in already_sent_ids:
+                continue
+
             if not appt.window_start or not appt.window_end:
                 continue
 
@@ -243,7 +304,6 @@ def check_window_open():
                     }
                 )
 
-                from app.models import AppointmentLog
                 db.add(AppointmentLog(
                     company_id=appt.terminal_id,
                     appointment_id=appt.id,
@@ -251,9 +311,10 @@ def check_window_open():
                     message="Notificação de janela de check-in aberta enviada ao motorista.",
                     json={"push_type": "WINDOW_OPEN", "sent_at": now.isoformat()}
                 ))
+                sent_count += 1
 
         db.commit()
-        logger.info(f"[scheduler] check_window_open executado em {now.isoformat()}")
+        logger.info(f"[scheduler] check_window_open executado em {now.isoformat()}: {sent_count} notificações enviadas.")
     except Exception as e:
         logger.error(f"[scheduler] Erro em check_window_open: {e}")
     finally:
@@ -267,9 +328,10 @@ def check_window_open():
 def check_in_progress():
     """
     Para agendamentos em status IN_PROGRESS, envia notificação com instrução.
+    Garante que a notificação seja enviada uma única vez ao entrar em andamento.
     Roda a cada 5 minutos.
     """
-    from app.models import Appointment
+    from app.models import Appointment, AppointmentLog
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -283,7 +345,29 @@ def check_in_progress():
             .all()
         )
 
+        if not appointments:
+            return
+
+        appt_ids = [appt.id for appt in appointments]
+        sent_logs = (
+            db.query(AppointmentLog.appointment_id, AppointmentLog.json)
+            .filter(
+                AppointmentLog.appointment_id.in_(appt_ids),
+                AppointmentLog.event == "notification_sent",
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.appointment_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "ON_GOING"
+        }
+
+        sent_count = 0
         for appt in appointments:
+            if appt.id in already_sent_ids:
+                continue
+
             terminal_name = appt.terminal.name if appt.terminal else "terminal"
             notify_user_by_tax_id(
                 db, appt.user_tax_id,
@@ -295,7 +379,6 @@ def check_in_progress():
                 }
             )
 
-            from app.models import AppointmentLog
             now = datetime.now(timezone.utc)
             db.add(AppointmentLog(
                 company_id=appt.terminal_id,
@@ -304,9 +387,10 @@ def check_in_progress():
                 message="Notificação de operação em andamento enviada ao motorista.",
                 json={"push_type": "ON_GOING", "sent_at": now.isoformat()}
             ))
+            sent_count += 1
 
         db.commit()
-        logger.info(f"[scheduler] check_in_progress: {len(appointments)} notificações enviadas.")
+        logger.info(f"[scheduler] check_in_progress: {sent_count} notificações enviadas.")
     except Exception as e:
         logger.error(f"[scheduler] Erro em check_in_progress: {e}")
     finally:
@@ -425,6 +509,51 @@ def deactivate_abandoned_appointments():
 
 
 # ---------------------------------------------------------------------------
+# Job 7: Excluir anúncios vencidos por data de expiração (e do Cloudflare R2)
+# ---------------------------------------------------------------------------
+
+def cleanup_expired_announcements():
+    """
+    Desativa anúncios vencidos por data de expiração (is_active = False, onde end_at < agora).
+    Exclui a imagem do Cloudflare R2 para economizar espaço e remove image_url.
+    Roda a cada 30 minutos.
+    """
+    from app.models import Announcement
+    from app.api.web.uploads import delete_r2_image
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        expired_announcements = (
+            db.query(Announcement)
+            .filter(
+                Announcement.is_active == True,
+                Announcement.end_at != None,
+                Announcement.end_at < now
+            )
+            .all()
+        )
+
+        if not expired_announcements:
+            return
+
+        count = 0
+        for ann in expired_announcements:
+            if ann.image_url:
+                delete_r2_image(ann.image_url)
+                ann.image_url = None
+            ann.is_active = False
+            count += 1
+
+        db.commit()
+        logger.info(f"[scheduler] cleanup_expired_announcements: {count} anúncio(s) vencido(s) desativado(s) (is_active=False) e imagem(ns) removida(s) do R2.")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em cleanup_expired_announcements: {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Registro dos jobs
 # ---------------------------------------------------------------------------
 
@@ -488,8 +617,17 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Job 7 — Limpeza de anúncios vencidos por data (a cada 30 minutos)
+    scheduler.add_job(
+        cleanup_expired_announcements,
+        "interval",
+        minutes=30,
+        id="job_cleanup_expired_announcements",
+        replace_existing=True,
+    )
+
     scheduler.start()
-    logger.info("APScheduler iniciado com 6 jobs configurados.")
+    logger.info("APScheduler iniciado com 7 jobs configurados.")
 
 
 def stop_scheduler():

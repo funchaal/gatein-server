@@ -10,6 +10,7 @@ from app.api.web.tickets_layout import router as tickets_layout_router
 from app.api.web.trips_layout import router as trips_layout_router
 from app.api.web.apiKey import router as api_keys_router
 from app.api.web.announcements import router as web_announcements_router
+from app.api.web.uploads import router as web_uploads_router
 
 router = APIRouter(prefix="/api/web")
 
@@ -23,3 +24,4 @@ router.include_router(tickets_layout_router, prefix="/config", tags=["Web Ticket
 router.include_router(trips_layout_router, prefix="/config", tags=["Web Trip Layouts"])
 router.include_router(api_keys_router, prefix="/api-key", tags=["API Keys"])
 router.include_router(web_announcements_router, tags=["Web Announcements"])
+router.include_router(web_uploads_router, tags=["Web Uploads"])

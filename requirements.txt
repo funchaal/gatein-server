@@ -9,3 +9,5 @@ pydantic-settings
 alembic
 firebase-admin
 apscheduler
+boto3
+python-slugify

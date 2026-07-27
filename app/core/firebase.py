@@ -130,22 +130,12 @@ def notify_user_by_tax_id(
         tax_id: CPF do motorista (chave de busca no User).
         title, body, data: Parâmetros da notificação.
     """
-    from app.models import User, UserFCMToken, Notification
+    from app.models import User, UserFCMToken
 
     user = db.query(User).filter_by(tax_id=tax_id).first()
     if not user:
         logger.warning(f"notify_user_by_tax_id: usuário não encontrado para tax_id {tax_id}")
         return {"sent": 0, "failed": 0, "dead_tokens": []}
-
-    # Salva no histórico do banco de dados
-    db_notif = Notification(
-        user_id=user.id,
-        title=title,
-        body=body,
-        data=data or {}
-    )
-    db.add(db_notif)
-    db.commit()
 
     token_rows = db.query(UserFCMToken).filter_by(user_id=user.id).all()
     tokens = [row.fcm_token for row in token_rows]
@@ -176,23 +166,12 @@ def notify_users_by_tax_ids(
     Notifica múltiplos usuários (por lista de tax_ids) em uma única chamada multicast.
     Útil para notificações em lote (ex: lembretes de 1 dia).
     """
-    from app.models import User, UserFCMToken, Notification
+    from app.models import User, UserFCMToken
 
     if not tax_ids:
         return {"sent": 0, "failed": 0, "dead_tokens": []}
 
     users = db.query(User).filter(User.tax_id.in_(tax_ids)).all()
-    
-    # Salva no histórico de cada usuário
-    for user in users:
-        db.add(Notification(
-            user_id=user.id,
-            title=title,
-            body=body,
-            data=data or {}
-        ))
-    db.commit()
-
     user_ids = [u.id for u in users]
 
     token_rows = db.query(UserFCMToken).filter(

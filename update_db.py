@@ -25,9 +25,6 @@ def migrate_and_update():
         "ALTER TABLE trips ADD COLUMN IF NOT EXISTS to_location VARCHAR(100);",
         "ALTER TABLE appointments DROP COLUMN IF EXISTS operation_type;",
         "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS url VARCHAR(500);",
-        "CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR(255) NOT NULL, body TEXT NOT NULL, data JSONB DEFAULT '{}', created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()));",
-        "CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications (user_id);",
-        "CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications (created_at DESC);",
         "ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE terminals ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE trucking_companies ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
@@ -48,7 +45,6 @@ def migrate_and_update():
         "ALTER TABLE trips_logs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE announcements_logs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE user_fcm_tokens ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
-        "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE staging_passwords ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;"
     ]
     

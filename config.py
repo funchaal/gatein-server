@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     # Gerado em: Firebase Console → Configurações do Projeto → Contas de Serviço
     FIREBASE_CREDENTIALS_PATH: str = "serviceAccountKey.json"
 
+    # ─── Cloudflare R2 ───────────────────────────────────────────────────────────
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "gatein"
+    R2_PUBLIC_URL: str = ""  # Ex: https://pub-xxxx.r2.dev
+
+    @property
+    def R2_ENDPOINT_URL(self) -> str:
+        return f"https://{self.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
     # ─── Ambiente ────────────────────────────────────────────────────────────
     # True  → Produção  (regras de isolamento multi-tenant INATIVAS)
     # False → Staging   (regras de isolamento multi-tenant ATIVAS via ORM event)

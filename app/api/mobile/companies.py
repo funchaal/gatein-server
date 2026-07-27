@@ -82,6 +82,8 @@ def serialize_company(company, distance_km=None, appointment_count=0, trip_count
     }
 
 
+ACTIVE_STATUSES = ["ACTIVE", "PLANNED", "CHECKED-IN", "CHECKED_IN", "ON_GOING", "ON-GOING", "IN_PROGRESS"]
+
 # --- ROUTES ---
 
 @router.get(
@@ -94,14 +96,46 @@ def search_companies(
     q: str = Query(None, min_length=2),
     lat: Optional[float] = Query(None),
     lng: Optional[float] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Filters companies by searching text queries against normalized unaccented title values.
     Calculates distances using Haversine formulas in PostgreSQL if geographic coordinates are provided.
+    Prioritizes companies with active, checked_in or on_going trips/appointments.
     """
     if not q or len(q.strip()) < 2: 
         return []
+
+    # Count active appointments for current user
+    appointments = (
+        db.query(Appointment)
+        .filter(
+            Appointment.user_tax_id == current_user.tax_id,
+            Appointment.status.in_(ACTIVE_STATUSES)
+        )
+        .all()
+    )
+    appointment_counts = {}
+    for a in appointments:
+        if a.terminal_id:
+            appointment_counts[a.terminal_id] = appointment_counts.get(a.terminal_id, 0) + 1
+
+    # Count active trips for current user
+    trips = []
+    if current_user.driver_id:
+        trips = (
+            db.query(Trip)
+            .filter(
+                Trip.driver_id == current_user.driver_id,
+                Trip.status.in_(ACTIVE_STATUSES)
+            )
+            .all()
+        )
+    trip_counts = {}
+    for t in trips:
+        if t.trucking_company_id:
+            trip_counts[t.trucking_company_id] = trip_counts.get(t.trucking_company_id, 0) + 1
 
     # Apply f_unaccent function to search concatenated title properties
     search_vector = func.f_unaccent(
@@ -151,16 +185,36 @@ def search_companies(
             distance_col
         ).outerjoin(TerminalTable, Company.id == TerminalTable.c.id).filter(
             and_(*condicoes)
-        ).limit(20)
+        ).limit(50)
         resultados = db.execute(stmt).all()
-        return [
-            serialize_company(r[0], distance_km=round(r[1], 2) if r[1] is not None else None)
+        comp_tuples = [
+            (r[0], round(r[1], 2) if r[1] is not None else None)
             for r in resultados
         ]
     else:
-        stmt = select(Company).filter(and_(*condicoes)).limit(20)
+        stmt = select(Company).filter(and_(*condicoes)).limit(50)
         resultados = db.scalars(stmt).all()
-        return [serialize_company(r) for r in resultados]
+        comp_tuples = [(r, None) for r in resultados]
+
+    # Companies with active trips or appointments MUST come first
+    comp_tuples.sort(
+        key=lambda item: (
+            (appointment_counts.get(item[0].id, 0) + trip_counts.get(item[0].id, 0)) > 0,
+            appointment_counts.get(item[0].id, 0) + trip_counts.get(item[0].id, 0),
+            -item[1] if item[1] is not None else -999999
+        ),
+        reverse=True
+    )
+
+    return [
+        serialize_company(
+            c,
+            distance_km=dist,
+            appointment_count=appointment_counts.get(c.id, 0),
+            trip_count=trip_counts.get(c.id, 0)
+        )
+        for c, dist in comp_tuples
+    ]
 
 
 @router.get(
@@ -261,10 +315,13 @@ def get_initial_companies(
     Constructs the landing dashboard list. Exposes recent companies from user's appointments and trips
     combined with nearest companies sorted by geolocation.
     """
-    # 1. Fetch user appointments and count occurrences
+    # 1. Fetch user active appointments and count occurrences
     appointments = (
         db.query(Appointment)
-        .filter(Appointment.user_tax_id == current_user.tax_id, Appointment.status != "DELETED")
+        .filter(
+            Appointment.user_tax_id == current_user.tax_id,
+            Appointment.status.in_(ACTIVE_STATUSES)
+        )
         .order_by(Appointment.window_start.desc())
         .all()
     )
@@ -274,12 +331,15 @@ def get_initial_companies(
         if a.terminal_id:
             appointment_counts[a.terminal_id] = appointment_counts.get(a.terminal_id, 0) + 1
             
-    # 2. Fetch user trips and count occurrences
+    # 2. Fetch user active trips and count occurrences
     trips = []
     if current_user.driver_id:
         trips = (
             db.query(Trip)
-            .filter(Trip.driver_id == current_user.driver_id, Trip.status != "DELETED")
+            .filter(
+                Trip.driver_id == current_user.driver_id,
+                Trip.status.in_(ACTIVE_STATUSES)
+            )
             .order_by(Trip.window_start.desc())
             .all()
         )

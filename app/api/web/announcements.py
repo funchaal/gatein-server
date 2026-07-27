@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import require_permission
 from app.models import CompanyUser, Announcement, AnnouncementLog
+from app.api.web.uploads import delete_r2_image
 
 router = APIRouter()
 
@@ -199,7 +200,10 @@ def update_announcement(
         if body.title is not None:          target.title = body.title
         if body.subtitle is not None:       target.subtitle = body.subtitle
         if body.description is not None:    target.description = body.description
-        if body.image_url is not None:      target.image_url = body.image_url
+        if body.image_url is not None:
+            if target.image_url and target.image_url != body.image_url:
+                delete_r2_image(target.image_url)
+            target.image_url = body.image_url
         if body.image_position is not None: target.image_position = body.image_position
         if body.url is not None:            target.url = body.url
         if body.is_active is not None:      target.is_active = body.is_active
@@ -304,6 +308,7 @@ def delete_announcement(
 ):
     """
     Deletes a target announcement after validating company ownership.
+    Exclui também a imagem associada no Cloudflare R2.
     """
     target = db.query(Announcement).filter_by(id=announcement_id, company_id=current_user.company_id).first()
     if not target:
@@ -313,6 +318,10 @@ def delete_announcement(
         )
 
     try:
+        # Exclui imagem no Cloudflare R2
+        if target.image_url:
+            delete_r2_image(target.image_url)
+
         create_announcement_log(
             db=db,
             announcement_id=target.id,
@@ -321,8 +330,7 @@ def delete_announcement(
             message="Aviso excluído pelo operador.",
             data={"title": target.title}
         )
-        target.is_active = False
-        db.flush()
+        db.delete(target)
         db.commit()
         return {"success": True, "data": {"status": "deleted", "id": str(announcement_id)}}
     except Exception as e:

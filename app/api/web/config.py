@@ -15,6 +15,7 @@ class GeofenceUpdateRequest(BaseModel):
     """Schema representing geofence and address update parameters."""
     geofence: Optional[Dict[str, Any]] = None
     address: Optional[Dict[str, Any]] = None
+    use_remote_checkin: Optional[bool] = None
 
 class CompanyInfoUpdateRequest(BaseModel):
     """Schema representing company profile and geofence updates."""
@@ -22,6 +23,10 @@ class CompanyInfoUpdateRequest(BaseModel):
     use_remote_checkin: Optional[bool] = None
     geofence: Optional[Dict[str, Any]] = None
     address: Optional[Dict[str, Any]] = None
+
+class CompanyLogoUpdateRequest(BaseModel):
+    """Schema for updating the company profile picture URL."""
+    logo_url: str
 
 
 # --- RESPONSE SCHEMAS ---
@@ -40,6 +45,7 @@ class AddressSchema(BaseModel):
 class GeofenceResponseData(BaseModel):
     """Metadata containing geofence coordinate maps and structural address fields."""
     geofence: Optional[Dict[str, Any]] = None
+    use_remote_checkin: Optional[bool] = None
     address: AddressSchema
 
 class GeofenceResponse(BaseModel):
@@ -65,6 +71,7 @@ class CompanyInfoResponseData(BaseModel):
     address: AddressSchema
     use_remote_checkin: Optional[bool] = None
     geofence: Optional[Dict[str, Any]] = None
+    logo_url: Optional[str] = None
 
 class CompanyInfoResponse(BaseModel):
     """Response containing company profile details."""
@@ -98,9 +105,11 @@ def get_geofence(
 
     # Geofence só existe para Terminais
     geofence_data = company.geofence if isinstance(company, Terminal) else {}
+    use_remote_checkin = company.use_remote_checkin if isinstance(company, Terminal) else False
 
     return {"success": True, "data": {
         "geofence": geofence_data,
+        "use_remote_checkin": use_remote_checkin,
         "address": {
             "street": company.address_street,
             "number": company.address_number,
@@ -137,6 +146,10 @@ def update_geofence(
                 detail={"code": "INVALID_COMPANY_TYPE", "message": "Apenas terminais possuem geofence."}
             )
         company.geofence = body.geofence
+
+    if body.use_remote_checkin is not None:
+        if isinstance(company, Terminal):
+            company.use_remote_checkin = body.use_remote_checkin
 
     if body.address is not None:
         addr = body.address
@@ -188,7 +201,8 @@ def get_company_info(
             "zip": company.address_zip,
             "lat": company.address_lat,
             "lng": company.address_lng,
-        }
+        },
+        "logo_url": (company.config or {}).get('logo_url') or (company.config or {}).get('logo'),
     }
 
     if isinstance(company, Terminal):
@@ -242,3 +256,35 @@ def update_company_info(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": str(e)})
+
+
+@router.put(
+    "/company/logo",
+    response_model=CompanyInfoUpdateResponse,
+    summary="Update Company Logo URL",
+    description="Saves the public URL of the uploaded company logo into the company config. Call this after a successful R2 upload."
+)
+def update_company_logo(
+    body: CompanyLogoUpdateRequest,
+    current_user: CompanyUser = Depends(require_permission('company_information', 'write')),
+    db: Session = Depends(get_db)
+):
+    """
+    Persists the logo_url returned by the pre-signed upload flow into company.config.
+    """
+    company = db.query(Company).get(current_user.company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
+
+    # Merge logo_url into the existing config JSONB — preserve other config fields
+    current_config = dict(company.config) if company.config else {}
+    current_config['logo_url'] = body.logo_url
+    current_config['logo'] = body.logo_url  # backward-compat alias used by mobile serializer
+    company.config = current_config
+
+    try:
+        db.commit()
+        return {"success": True, "message": "Logo da empresa atualizado com sucesso"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": str(e)})

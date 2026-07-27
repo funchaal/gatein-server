@@ -24,8 +24,10 @@ class Company(Base, ActiveModelMixin):
     phone = Column(String(20), nullable=False)
     email = Column(String(100), nullable=False)
 
-    api_key_hash = Column(String(255), nullable=False)
-    api_key_prefix = Column(String(50), unique=True, index=True, nullable=False)
+    api_key_hash = Column(String(255), nullable=True)
+    api_key_prefix = Column(String(50), unique=True, index=True, nullable=True)
+    api_key_secondary_hash = Column(String(255), nullable=True)
+    api_key_secondary_prefix = Column(String(50), unique=True, index=True, nullable=True)
 
     config = Column(JSONB, default={})
 
@@ -521,26 +523,6 @@ class UserFCMToken(Base, ActiveModelMixin):
     )
 
 
-class Notification(Base, ActiveModelMixin):
-    """Armazena o histórico de notificações de cada usuário.
-    Mantido no banco por até 7 dias.
-    """
-    __tablename__ = 'notifications'
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    
-    title = Column(String(255), nullable=False)
-    body = Column(Text, nullable=False)
-    data = Column(JSONB, nullable=True, default=dict)
-    
-    created_at = Column(
-        DateTime(timezone=True), 
-        default=lambda: datetime.now(timezone.utc),
-        index=True
-    )
-
-    user = relationship("User")
 
 
 # --- STAGING: Senha Mestra de Homologação ---

@@ -76,13 +76,18 @@ class TerminalResponseSchema(BaseModel):
     """Schema representing terminal company details."""
     id: str
     name: str
+    branch_name: Optional[str] = None
+    logo_url: Optional[str] = None
     use_remote_checkin: bool
     address: AddressSchema
     geofence: Optional[Dict[str, Any]] = None
 
 class TruckingCompanyResponseSchema(BaseModel):
     """Schema representing trucking company details."""
+    id: Optional[str] = None
     name: str
+    branch_name: Optional[str] = None
+    logo_url: Optional[str] = None
     address: AddressSchema
 
 class LayoutInfoSchema(BaseModel):
@@ -206,9 +211,14 @@ def serialize_trip(t) -> dict:
 
 def serialize_terminal(term) -> dict:
     """Serializes Terminal instance to dict format."""
+    logo = None
+    if term.config:
+        logo = term.config.get('logo') or term.config.get('logo_url') or term.config.get('icon_url')
     return {
         "id": str(term.id),
         "name": term.name,
+        "branch_name": term.branch_name,
+        "logo_url": logo,
         "use_remote_checkin": term.use_remote_checkin,
         "address": {
             "street": term.address_street,
@@ -225,8 +235,14 @@ def serialize_terminal(term) -> dict:
 
 def serialize_trucking_company(truck) -> dict:
     """Serializes TruckingCompany instance to dict format."""
+    logo = None
+    if truck.config:
+        logo = truck.config.get('logo') or truck.config.get('logo_url') or truck.config.get('icon_url')
     return {
+        "id": str(truck.id),
         "name": truck.name,
+        "branch_name": truck.branch_name,
+        "logo_url": logo,
         "address": {
             "city": truck.address_city,
             "state": truck.address_state,
@@ -259,62 +275,16 @@ def get_activities(
     appt_filters = [Appointment.user_tax_id == current_user.tax_id, Appointment.status != "DELETED"]
     trip_filters = [Trip.driver_id == current_user.driver_id, Trip.status != "DELETED"]
 
-    now_utc = datetime.now(timezone.utc)
-    twelve_hours_ago = now_utc - timedelta(hours=12)
-    active_statuses = ["ACTIVE", "ON_GOING", "CHECKED-IN", "PAUSED", "PLANNED"]
+    active_statuses = ["ACTIVE", "ON_GOING", "CHECKED-IN", "CHECKED_IN", "PAUSED", "PLANNED", "IN_PROGRESS"]
 
     if status_filter == "active":
-        # Atividades: exibe ativos E desativados há menos de 12 horas
-        appt_filters.append(
-            or_(
-                Appointment.status.in_(active_statuses),
-                and_(
-                    Appointment.status == "DEACTIVATED",
-                    or_(
-                        Appointment.deactivated_at >= twelve_hours_ago,
-                        and_(Appointment.deactivated_at == None, Appointment.updated_at >= twelve_hours_ago)
-                    )
-                )
-            )
-        )
-        trip_filters.append(
-            or_(
-                Trip.status.in_(active_statuses),
-                and_(
-                    Trip.status == "DEACTIVATED",
-                    Trip.updated_at >= twelve_hours_ago
-                )
-            )
-        )
+        # Atividades ativas: exibe apenas os status ativos
+        appt_filters.append(Appointment.status.in_(active_statuses))
+        trip_filters.append(Trip.status.in_(active_statuses))
     elif status_filter == "history":
-        # Histórico: exibe não-ativos E desativados há mais de 12 horas
-        appt_filters.append(
-            and_(
-                Appointment.status.notin_(active_statuses),
-                or_(
-                    Appointment.status != "DEACTIVATED",
-                    and_(
-                        Appointment.status == "DEACTIVATED",
-                        or_(
-                            Appointment.deactivated_at < twelve_hours_ago,
-                            and_(Appointment.deactivated_at == None, Appointment.updated_at < twelve_hours_ago)
-                        )
-                    )
-                )
-            )
-        )
-        trip_filters.append(
-            and_(
-                Trip.status.notin_(active_statuses),
-                or_(
-                    Trip.status != "DEACTIVATED",
-                    and_(
-                        Trip.status == "DEACTIVATED",
-                        Trip.updated_at < twelve_hours_ago
-                    )
-                )
-            )
-        )
+        # Histórico: exibe todos os desativados e não-ativos
+        appt_filters.append(Appointment.status.notin_(active_statuses))
+        trip_filters.append(Trip.status.notin_(active_statuses))
 
     if start_date:
         appt_filters.append(Appointment.window_start >= start_date)

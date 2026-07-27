@@ -142,16 +142,6 @@ def send_test_notification(
             detail="Nenhum token FCM registrado. Abra o app para registrar o dispositivo primeiro."
         )
 
-    # Salva no histórico do banco de dados
-    from app.models import Notification
-    db.add(Notification(
-        user_id=current_user.id,
-        title="🔔 GateIn — Notificação de Teste",
-        body=f"Olá, {current_user.name or 'motorista'}! As notificações estão funcionando.",
-        data={"type": "TEST"},
-    ))
-    db.commit()
-
     result = send_push_notification(
         tokens=tokens,
         title="🔔 GateIn — Notificação de Teste",
@@ -184,44 +174,15 @@ class NotificationHistoryResponse(BaseModel):
     "/notifications",
     response_model=list[NotificationHistoryResponse],
     summary="Get Notification History",
-    description="Returns all notifications sent to the current user in the last 7 days.",
+    description="Deprecated: Notification history is now managed locally on the mobile device.",
     tags=["Mobile Notifications"],
 )
 def get_notifications_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retorna o histórico de notificações do usuário autenticado dos últimos 7 dias."""
-    from app.models import Notification
-    
-    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    
-    # Remove automaticamente notificações anteriores a 7 dias para este usuário
-    db.query(Notification).filter(
-        Notification.user_id == current_user.id,
-        Notification.created_at < seven_days_ago
-    ).delete(synchronize_session=False)
-    db.commit()
-
-    # Busca as notificações do usuário nos últimos 7 dias ordedadas por data (mais recente primeiro)
-    notifications = (
-        db.query(Notification)
-        .filter(
-            Notification.user_id == current_user.id,
-            Notification.created_at >= seven_days_ago
-        )
-        .order_by(Notification.created_at.desc())
-        .all()
-    )
-
-    return [
-        NotificationHistoryResponse(
-            id=str(n.id),
-            title=n.title,
-            body=n.body,
-            data=n.data or {},
-            created_at=n.created_at
-        )
-        for n in notifications
-    ]
+    """
+    Endpoint mantido por compatibilidade. O histórico de notificações é salvo localmente no celular.
+    """
+    return []
 

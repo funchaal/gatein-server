@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.security import generate_jwt
-from app.models import User, CompanyService
+from app.models import User, CompanyService, AllowedDomain
 
 router = APIRouter()
 
@@ -61,7 +61,16 @@ def get_services_by_company(
     """
     Fetches and filters active services provided by a company.
     """
-    services = db.query(CompanyService).filter_by(company_id=company_id, is_active=True).all()
+    services = (
+        db.query(CompanyService)
+        .join(AllowedDomain, CompanyService.domain_id == AllowedDomain.id)
+        .filter(
+            CompanyService.company_id == company_id,
+            CompanyService.is_active == True,
+            AllowedDomain.is_active == True
+        )
+        .all()
+    )
     return {"success": True, "data": [
         {
             "id": str(s.id),

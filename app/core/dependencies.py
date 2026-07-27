@@ -1,5 +1,6 @@
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError, ExpiredSignatureError
 from app.core.database import get_db
@@ -39,9 +40,11 @@ def get_company_from_api_key(
         )
 
     prefix = f"{parts[0]}_{parts[1]}_{parts[2]}"
-    company = db.query(Company).filter_by(api_key_prefix=prefix).first()
+    company = db.query(Company).filter(
+        or_(Company.api_key_prefix == prefix, Company.api_key_secondary_prefix == prefix)
+    ).first()
 
-    if not company or not verify_secret(company.api_key_hash, x_api_key):
+    if not company:
         raise HTTPException(
             status_code=401, 
             detail={
@@ -51,7 +54,22 @@ def get_company_from_api_key(
             }
         )
 
-    return company
+    # 1. Tenta validar com a chave 1 (primária)
+    if company.api_key_hash and verify_secret(company.api_key_hash, x_api_key):
+        return company
+
+    # 2. Se falhar ou não bater a chave 1, e a chave 2 (secundária) estiver preenchida, tenta com a chave 2
+    if company.api_key_secondary_hash and verify_secret(company.api_key_secondary_hash, x_api_key):
+        return company
+
+    raise HTTPException(
+        status_code=401, 
+        detail={
+            "code": "INVALID_API_KEY",
+            "message": "A credencial enviada não é válida.",
+            "suggestion": "Gere uma nova chave através do painel da empresa."
+        }
+    )
 
 
 # --- Dependency: Mobile JWT ---
