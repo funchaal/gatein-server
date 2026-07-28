@@ -46,7 +46,7 @@ def check_1day_reminders():
     Garante envio único por agendamento.
     Roda a cada hora.
     """
-    from app.models import Appointment, AppointmentLog
+    from app.models import Appointment, AppointmentLog, AppointmentEvent
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -75,7 +75,7 @@ def check_1day_reminders():
             db.query(AppointmentLog.appointment_id, AppointmentLog.json)
             .filter(
                 AppointmentLog.appointment_id.in_(appt_ids),
-                AppointmentLog.event == "notification_sent",
+                AppointmentLog.event == AppointmentEvent.NOTIFICATION_SENT,
             )
             .all()
         )
@@ -117,9 +117,9 @@ def check_1day_reminders():
                     db.add(AppointmentLog(
                         company_id=appt.terminal_id,
                         appointment_id=appt.id,
-                        event="notification_sent",
-                        message="Notificação de lembrete (1 dia) enviada ao motorista.",
-                        json={"push_type": "REMINDER_1DAY", "sent_at": now.isoformat()}
+                        event=AppointmentEvent.NOTIFICATION_SENT,
+                        message=f"Lembrete 1 dia enviado: {title}",
+                        json={"push_type": "REMINDER_1DAY"},
                     ))
         db.commit()
 
@@ -142,7 +142,7 @@ def check_12h_reminders():
     Garante envio único por agendamento.
     Roda a cada 15 minutos.
     """
-    from app.models import Appointment, AppointmentLog
+    from app.models import Appointment, AppointmentLog, AppointmentEvent
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -171,7 +171,7 @@ def check_12h_reminders():
             db.query(AppointmentLog.appointment_id, AppointmentLog.json)
             .filter(
                 AppointmentLog.appointment_id.in_(appt_ids),
-                AppointmentLog.event == "notification_sent",
+                AppointmentLog.event == AppointmentEvent.NOTIFICATION_SENT,
             )
             .all()
         )
@@ -221,9 +221,9 @@ def check_12h_reminders():
                     db.add(AppointmentLog(
                         company_id=appt.terminal_id,
                         appointment_id=appt.id,
-                        event="notification_sent",
-                        message="Notificação de countdown (12h) enviada ao motorista.",
-                        json={"push_type": "COUNTDOWN", "sent_at": now.isoformat()}
+                        event=AppointmentEvent.NOTIFICATION_SENT,
+                        message=f"Lembrete 12h enviado: {title}",
+                        json={"push_type": "COUNTDOWN"},
                     ))
         db.commit()
 
@@ -245,7 +245,7 @@ def check_window_open():
     Garante que a notificação de janela aberta seja enviada uma única vez por agendamento.
     Roda a cada 5 minutos.
     """
-    from app.models import Appointment, AppointmentLog
+    from app.models import Appointment, AppointmentLog, AppointmentEvent
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -269,7 +269,7 @@ def check_window_open():
             db.query(AppointmentLog.appointment_id, AppointmentLog.json)
             .filter(
                 AppointmentLog.appointment_id.in_(appt_ids),
-                AppointmentLog.event == "notification_sent",
+                AppointmentLog.event == AppointmentEvent.NOTIFICATION_SENT,
             )
             .all()
         )
@@ -307,14 +307,15 @@ def check_window_open():
                 db.add(AppointmentLog(
                     company_id=appt.terminal_id,
                     appointment_id=appt.id,
-                    event="notification_sent",
-                    message="Notificação de janela de check-in aberta enviada ao motorista.",
-                    json={"push_type": "WINDOW_OPEN", "sent_at": now.isoformat()}
+                    event=AppointmentEvent.NOTIFICATION_SENT,
+                    message="Notificação de Janela Aberta enviada",
+                    json={"push_type": "WINDOW_OPEN"},
                 ))
                 sent_count += 1
 
         db.commit()
-        logger.info(f"[scheduler] check_window_open executado em {now.isoformat()}: {sent_count} notificações enviadas.")
+        if sent_count > 0:
+            logger.info(f"[scheduler] check_window_open: {sent_count} notificação(ões) enviada(s).")
     except Exception as e:
         logger.error(f"[scheduler] Erro em check_window_open: {e}")
     finally:
@@ -331,7 +332,7 @@ def check_in_progress():
     Garante que a notificação seja enviada uma única vez ao entrar em andamento.
     Roda a cada 5 minutos.
     """
-    from app.models import Appointment, AppointmentLog
+    from app.models import Appointment, AppointmentLog, AppointmentEvent
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -353,7 +354,7 @@ def check_in_progress():
             db.query(AppointmentLog.appointment_id, AppointmentLog.json)
             .filter(
                 AppointmentLog.appointment_id.in_(appt_ids),
-                AppointmentLog.event == "notification_sent",
+                AppointmentLog.event == AppointmentEvent.NOTIFICATION_SENT,
             )
             .all()
         )
@@ -383,9 +384,9 @@ def check_in_progress():
             db.add(AppointmentLog(
                 company_id=appt.terminal_id,
                 appointment_id=appt.id,
-                event="notification_sent",
-                message="Notificação de operação em andamento enviada ao motorista.",
-                json={"push_type": "ON_GOING", "sent_at": now.isoformat()}
+                event=AppointmentEvent.NOTIFICATION_SENT,
+                message="Notificação de Operação em Andamento enviada",
+                json={"push_type": "ON_GOING"},
             ))
             sent_count += 1
 
@@ -437,7 +438,7 @@ def deactivate_abandoned_appointments():
     Ao desativar, registra deactivated_at = now() para que o app exiba em 'Atividades' por 12h.
     Roda a cada 5 minutos.
     """
-    from app.models import Appointment, AppointmentLog
+    from app.models import Appointment, AppointmentLog, AppointmentEvent
     from app.core.firebase import notify_user_by_tax_id
 
     db = SessionLocal()
@@ -481,9 +482,7 @@ def deactivate_abandoned_appointments():
             db.add(AppointmentLog(
                 company_id=appt.terminal_id,
                 appointment_id=appt.id,
-                event="auto_deactivated",
-                message=f"Agendamento desativado automaticamente: {reason}",
-                json={"previous_status": old_status, "deactivated_at": now.isoformat()}
+                event=AppointmentEvent.AUTO_DEACTIVATED,
             ))
             
             # Notifica motorista sobre desativação (invalida cache e gera alerta)

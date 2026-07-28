@@ -1,4 +1,3 @@
-import json
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -7,30 +6,22 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
-from app.models import Company, Appointment, Ticket, TicketLayout, AppointmentLog
+from app.core.sqids import encode_id, decode_id
+from app.models import Company, Appointment, Ticket, TicketLayout, AppointmentLog, AppointmentEvent
 
 router = APIRouter()
 
 
 # --- HELPER LOGS ---
-def create_appointment_log(db: Session, company_id: Any, appointment_id: Any, event: str, message: str, data: dict):
+def create_appointment_log(db: Session, company_id: Any, appointment_id: Any, event: AppointmentEvent):
     """
-    Utility function to log ticket-related changes on the parent appointment.
-    Serializes datetime objects to ISO format for JSON storage.
+    Utility function to log ticket-related events on the parent appointment.
+    Columns message and json are kept in schema but not populated.
     """
-    def json_serializer(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        raise TypeError(f"Type {type(obj)} not serializable")
-
-    serialized_data = json.loads(json.dumps(data, default=json_serializer))
-
     log = AppointmentLog(
         company_id=company_id,
         appointment_id=appointment_id,
         event=event,
-        message=message,
-        json=serialized_data
     )
     db.add(log)
 
@@ -52,7 +43,7 @@ class CreateTicketPayload(BaseModel):
 
 class UpdateTicketPayload(BaseModel):
     """Payload to update fields of an existing ticket by its ID."""
-    ticket_id: str = Field(..., description="UUID do ticket a ser atualizado")
+    ticket_id: str = Field(..., description="ID hash do ticket a ser atualizado")
     content: Optional[Dict[str, Any]] = Field(None, description="Novos dados do conteúdo do ticket")
     layout_ref: Optional[str] = Field(None, description="Nova referência de layout (se necessário trocar)")
 
@@ -190,11 +181,9 @@ def create_tickets(
             db=db,
             company_id=company.id,
             appointment_id=appt.id,
-            event="ticket_created",
-            message="Ticket criado via API.",
-            data={"layout_ref": item.layout_ref, "appointment_ref": item.appointment_ref}
+            event=AppointmentEvent.TICKET_CREATED,
         )
-        created_ids.append(str(ticket.id))
+        created_ids.append(encode_id(ticket.id))
 
     try:
         db.commit()
@@ -239,14 +228,20 @@ def update_tickets(
             }
         )
 
-    ticket_ids = [item.ticket_id for item in items]
+    ticket_ids_decoded = []
+    for item in items:
+        try:
+            ticket_ids_decoded.append(decode_id(item.ticket_id))
+        except (ValueError, Exception):
+            raise HTTPException(status_code=400, detail={"code": "INVALID_ID", "message": f"ID de ticket inválido: {item.ticket_id}"})
+
     tickets = db.query(Ticket).filter(
         Ticket.terminal_id == company.id,
-        Ticket.id.in_(ticket_ids)
+        Ticket.id.in_(ticket_ids_decoded)
     ).all()
-    ticket_map = {str(t.id): t for t in tickets}
+    ticket_map = {t.id: t for t in tickets}
 
-    not_found = [tid for tid in ticket_ids if tid not in ticket_map]
+    not_found = [items[i].ticket_id for i, did in enumerate(ticket_ids_decoded) if did not in ticket_map]
     if not_found:
         raise HTTPException(
             status_code=404,
@@ -258,8 +253,8 @@ def update_tickets(
         )
 
     updated_ids = []
-    for item in items:
-        ticket = ticket_map[item.ticket_id]
+    for i, item in enumerate(items):
+        ticket = ticket_map[ticket_ids_decoded[i]]
         if item.content is not None:
             ticket.content = item.content
         if item.layout_ref is not None:
@@ -269,9 +264,7 @@ def update_tickets(
             db=db,
             company_id=company.id,
             appointment_id=ticket.appointment_id,
-            event="ticket_updated",
-            message="Ticket atualizado via API.",
-            data={"ticket_id": item.ticket_id}
+            event=AppointmentEvent.TICKET_UPDATED,
         )
         updated_ids.append(item.ticket_id)
 
@@ -314,9 +307,16 @@ def delete_tickets(
             }
         )
 
+    decoded_ids = []
+    for tid in ticket_ids:
+        try:
+            decoded_ids.append(decode_id(tid))
+        except (ValueError, Exception):
+            pass
+
     tickets = db.query(Ticket).filter(
         Ticket.terminal_id == company.id,
-        Ticket.id.in_(ticket_ids)
+        Ticket.id.in_(decoded_ids)
     ).all()
 
     if not tickets:
@@ -334,9 +334,7 @@ def delete_tickets(
             db=db,
             company_id=company.id,
             appointment_id=ticket.appointment_id,
-            event="ticket_deleted",
-            message="Ticket removido via API.",
-            data={"ticket_id": str(ticket.id), "appointment_ref": ticket.appointment_ref}
+            event=AppointmentEvent.TICKET_DELETED,
         )
         ticket.is_active = False
 
@@ -377,10 +375,10 @@ def get_tickets(
     for ticket in tickets:
         if ticket.appointment_ref in tickets_by_ref:
             tickets_by_ref[ticket.appointment_ref].append({
-                "id": str(ticket.id),
-                "appointment_id": str(ticket.appointment_id),
+                "id": encode_id(ticket.id),
+                "appointment_id": encode_id(ticket.appointment_id),
                 "appointment_ref": ticket.appointment_ref,
-                "terminal_id": str(ticket.terminal_id),
+                "terminal_id": encode_id(ticket.terminal_id),
                 "layout_ref": ticket.layout_ref,
                 "content": ticket.content,
                 "created_at": ticket.created_at.isoformat() if ticket.created_at else None,

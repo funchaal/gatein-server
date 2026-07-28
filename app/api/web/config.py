@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import require_permission
+from app.core.database import get_db
+from app.core.dependencies import require_permission
+from app.core.sqids import encode_id
 from app.models import CompanyUser, Company, Terminal, TruckingCompany
 
 router = APIRouter()
@@ -17,12 +20,19 @@ class GeofenceUpdateRequest(BaseModel):
     address: Optional[Dict[str, Any]] = None
     use_remote_checkin: Optional[bool] = None
 
+class SafetyIntegrationConfigSchema(BaseModel):
+    active: bool = False
+    video_url: Optional[str] = None
+    form_url: Optional[str] = None
+    blocks_checkin: bool = False
+
 class CompanyInfoUpdateRequest(BaseModel):
     """Schema representing company profile and geofence updates."""
     name: Optional[str] = None
     use_remote_checkin: Optional[bool] = None
     geofence: Optional[Dict[str, Any]] = None
     address: Optional[Dict[str, Any]] = None
+    safety_integration: Optional[SafetyIntegrationConfigSchema] = None
 
 class CompanyLogoUpdateRequest(BaseModel):
     """Schema for updating the company profile picture URL."""
@@ -72,6 +82,7 @@ class CompanyInfoResponseData(BaseModel):
     use_remote_checkin: Optional[bool] = None
     geofence: Optional[Dict[str, Any]] = None
     logo_url: Optional[str] = None
+    safety_integration: Optional[SafetyIntegrationConfigSchema] = None
 
 class CompanyInfoResponse(BaseModel):
     """Response containing company profile details."""
@@ -188,7 +199,7 @@ def get_company_info(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
 
     data = {
-        "id": str(company.id),
+        "id": encode_id(company.id),
         "type": company.type,
         "name": company.name,
         "tax_id": company.tax_id,
@@ -208,6 +219,14 @@ def get_company_info(
     if isinstance(company, Terminal):
         data["use_remote_checkin"] = company.use_remote_checkin
         data["geofence"] = company.geofence
+        
+        cfg = company.config or {}
+        data["safety_integration"] = {
+            "active": cfg.get("safety_integration_active", False),
+            "video_url": cfg.get("safety_integration_video_url"),
+            "form_url": cfg.get("safety_integration_form_url"),
+            "blocks_checkin": cfg.get("safety_integration_blocks_checkin", False),
+        }
 
     return {"success": True, "data": data}
 
@@ -249,6 +268,14 @@ def update_company_info(
         company.address_zip     = addr.get("zip",     company.address_zip)
         company.address_lat     = addr.get("lat",     company.address_lat)
         company.address_lng     = addr.get("lng",     company.address_lng)
+
+    if isinstance(company, Terminal) and body.safety_integration is not None:
+        current_config = dict(company.config) if company.config else {}
+        current_config['safety_integration_active'] = body.safety_integration.active
+        current_config['safety_integration_video_url'] = body.safety_integration.video_url
+        current_config['safety_integration_form_url'] = body.safety_integration.form_url
+        current_config['safety_integration_blocks_checkin'] = body.safety_integration.blocks_checkin
+        company.config = current_config
 
     try:
         db.commit()

@@ -1,5 +1,3 @@
-import uuid
-import json
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -8,27 +6,19 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import require_permission
-from app.models import CompanyUser, Announcement, AnnouncementLog
+from app.core.sqids import encode_id, decode_id
+from app.models import CompanyUser, Announcement, AnnouncementLog, AnnouncementEvent
 from app.api.web.uploads import delete_r2_image
 
 router = APIRouter()
 
 # --- HELPER LOGS ---
-def create_announcement_log(db: Session, announcement_id: Any, company_user_id: Any, event: str, message: str, data: dict):
+def create_announcement_log(db: Session, announcement_id: Any, company_user_id: Any, event: AnnouncementEvent):
     """Logs action events on announcements for audit logs tracking."""
-    def json_serializer(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        raise TypeError(f"Type {type(obj)} not serializable")
-        
-    serialized_data = json.loads(json.dumps(data, default=json_serializer))
-    
     log = AnnouncementLog(
         announcement_id=announcement_id,
         company_user_id=company_user_id,
         event=event,
-        message=message,
-        json=serialized_data
     )
     db.add(log)
 
@@ -107,8 +97,8 @@ def get_announcements(
         
     return {"success": True, "data": [
         {
-            "id": str(a.id),
-            "company_id": str(a.company_id),
+            "id": encode_id(a.id),
+            "company_id": encode_id(a.company_id),
             "title": a.title,
             "subtitle": a.subtitle,
             "description": a.description,
@@ -148,21 +138,15 @@ def create_announcement(
             db=db,
             announcement_id=new_announcement.id,
             company_user_id=current_user.id,
-            event="created",
-            message="Aviso criado pelo operador.",
-            data={
-                "title": new_announcement.title,
-                "subtitle": new_announcement.subtitle,
-                "is_active": new_announcement.is_active
-            }
+            event=AnnouncementEvent.CREATED,
         )
         db.commit()
         
         return {
             "success": True,
             "data": {
-                "id": str(new_announcement.id),
-                "company_id": str(new_announcement.company_id),
+                "id": encode_id(new_announcement.id),
+                "company_id": encode_id(new_announcement.company_id),
                 "title": new_announcement.title,
                 "subtitle": new_announcement.subtitle,
                 "description": new_announcement.description,
@@ -184,12 +168,13 @@ def create_announcement(
 
 @router.put("/announcements/{announcement_id}", response_model=AnnouncementSingleResponse)
 def update_announcement(
-    announcement_id: uuid.UUID,
+    announcement_id: str,
     body: AnnouncementUpdateRequest,
     current_user: CompanyUser = Depends(require_permission('announcements', 'write')),
     db: Session = Depends(get_db)
 ):
-    target = db.query(Announcement).filter_by(id=announcement_id, company_id=current_user.company_id).first()
+    decoded_id = decode_id(announcement_id)
+    target = db.query(Announcement).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -215,17 +200,15 @@ def update_announcement(
             db=db,
             announcement_id=target.id,
             company_user_id=current_user.id,
-            event="updated",
-            message="Aviso atualizado pelo operador.",
-            data=body.dict(exclude_none=True)
+            event=AnnouncementEvent.UPDATED,
         )
         db.commit()
         
         return {
             "success": True,
             "data": {
-                "id": str(target.id),
-                "company_id": str(target.company_id),
+                "id": encode_id(target.id),
+                "company_id": encode_id(target.company_id),
                 "title": target.title,
                 "subtitle": target.subtitle,
                 "description": target.description,
@@ -247,12 +230,13 @@ def update_announcement(
 
 @router.patch("/announcements/{announcement_id}/status", response_model=AnnouncementSingleResponse)
 def update_announcement_status(
-    announcement_id: uuid.UUID,
+    announcement_id: str,
     body: AnnouncementStatusUpdateRequest,
     current_user: CompanyUser = Depends(require_permission('announcements', 'write')),
     db: Session = Depends(get_db)
 ):
-    target = db.query(Announcement).filter_by(id=announcement_id, company_id=current_user.company_id).first()
+    decoded_id = decode_id(announcement_id)
+    target = db.query(Announcement).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -266,17 +250,15 @@ def update_announcement_status(
             db=db,
             announcement_id=target.id,
             company_user_id=current_user.id,
-            event="updated",
-            message=f"Status de ativação alterado para {body.is_active}.",
-            data={"is_active": body.is_active}
+            event=AnnouncementEvent.UPDATED,
         )
         db.commit()
         
         return {
             "success": True,
             "data": {
-                "id": str(target.id),
-                "company_id": str(target.company_id),
+                "id": encode_id(target.id),
+                "company_id": encode_id(target.company_id),
                 "title": target.title,
                 "subtitle": target.subtitle,
                 "description": target.description,
@@ -302,7 +284,7 @@ def update_announcement_status(
     description="Deletes an announcement and records the deletion event in the logs."
 )
 def delete_announcement(
-    announcement_id: uuid.UUID,
+    announcement_id: str,
     current_user: CompanyUser = Depends(require_permission('announcements', 'write')),
     db: Session = Depends(get_db)
 ):
@@ -310,7 +292,8 @@ def delete_announcement(
     Deletes a target announcement after validating company ownership.
     Exclui também a imagem associada no Cloudflare R2.
     """
-    target = db.query(Announcement).filter_by(id=announcement_id, company_id=current_user.company_id).first()
+    decoded_id = decode_id(announcement_id)
+    target = db.query(Announcement).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -326,13 +309,11 @@ def delete_announcement(
             db=db,
             announcement_id=target.id,
             company_user_id=current_user.id,
-            event="deleted",
-            message="Aviso excluído pelo operador.",
-            data={"title": target.title}
+            event=AnnouncementEvent.DELETED,
         )
         db.delete(target)
         db.commit()
-        return {"success": True, "data": {"status": "deleted", "id": str(announcement_id)}}
+        return {"success": True, "data": {"status": "deleted", "id": announcement_id}}
     except Exception as e:
         db.rollback()
         raise HTTPException(

@@ -10,4 +10,9 @@ alembic
 firebase-admin
 apscheduler
 boto3
-python-slugify
+python-slugify
+python-socketio
+supabase
+sqids
+python-multipart
+email-validator

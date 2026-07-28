@@ -580,3 +580,27 @@ class StagingPassword(Base, ActiveModelMixin):
     __table_args__ = (
         Index('idx_staging_password_company', 'company_id'),
     )
+
+class SafetyIntegration(Base, ActiveModelMixin):
+    """
+    Registra a integração de segurança de um motorista (por tax_id) com uma empresa (terminal).
+    Pode ser enviado pelo ERP (com data de expiração) ou preenchido pelo app mobile.
+    """
+    __tablename__ = 'safety_integrations'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tax_id = Column(String(14), index=True, nullable=False)
+    company_id = Column(BigInteger, ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
+    
+    watched_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    company = relationship("Company")
+
+    __table_args__ = (
+        UniqueConstraint('tax_id', 'company_id', name='unique_safety_integration_per_company'),
+        Index('idx_safety_integrations_lookup', 'tax_id', 'company_id'),
+    )

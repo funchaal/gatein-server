@@ -1,4 +1,3 @@
-import json
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -7,29 +6,21 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
-from app.models import Company, Driver, Trip, TripLayout, TripLog
+from app.core.sqids import encode_id, decode_id
+from app.models import Company, Driver, Trip, TripLayout, TripLog, TripEvent
 
 router = APIRouter()
 
 # --- HELPER LOGS ---
-def create_trip_log(db: Session, company_id: Any, trip_id: Any, event: str, message: str, data: dict):
+def create_trip_log(db: Session, company_id: Any, trip_id: Any, event: TripEvent):
     """
-    Utility function to log changes and events for a trip in the database.
-    Serializes date/time elements dynamically to JSON format.
+    Utility function to log events for a trip in the database.
+    Columns message and json are kept in schema but not populated.
     """
-    def json_serializer(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        raise TypeError(f"Type {type(obj)} not serializable")
-        
-    serialized_data = json.loads(json.dumps(data, default=json_serializer))
-    
     log = TripLog(
         company_id=company_id,
         trip_id=trip_id,
         event=event,
-        message=message,
-        json=serialized_data
     )
     db.add(log)
 
@@ -118,7 +109,7 @@ class TripLogResponseItem(BaseModel):
     """Item schema representing a log trace of a trip."""
     id: str
     event: str
-    message: str
+    message: Optional[str] = None
     json_data: Optional[Dict[str, Any]] = Field(None, validation_alias="json", serialization_alias="json")
     created_at: Optional[str] = None
 
@@ -325,14 +316,7 @@ def create_trips(
             db=db,
             company_id=company.id,
             trip_id=new_trip.id,
-            event="created",
-            message="Viagem criada via API.",
-            data={
-                "ref": new_trip.ref,
-                "license_plate": new_trip.license_plate,
-                "window_start": new_trip.window_start.isoformat() if new_trip.window_start else None,
-                "window_end": new_trip.window_end.isoformat() if new_trip.window_end else None,
-            }
+            event=TripEvent.CREATED,
         )
         created_refs.append(new_trip.ref)
 
@@ -400,9 +384,7 @@ def update_trips(
             db=db,
             company_id=company.id,
             trip_id=trip_obj.id,
-            event="updated",
-            message="Viagem atualizada via API.",
-            data=item.trip
+            event=TripEvent.UPDATED,
         )
         
         updated_refs.append(item.ref)
@@ -474,9 +456,7 @@ def delete_trips(
             db=db,
             company_id=company.id,
             trip_id=trip_obj.id,
-            event="deleted",
-            message="Viagem deletada/cancelada.",
-            data={"ref": trip_obj.ref, "status": "DELETED"}
+            event=TripEvent.DELETED,
         )
 
     db.commit()
@@ -535,8 +515,8 @@ def get_trips_logs(
 
         serialized_logs = [
             {
-                "id": str(log.id),
-                "event": log.event,
+                "id": encode_id(log.id),
+                "event": log.event.value if log.event else None,
                 "message": log.message,
                 "json": log.json,
                 "created_at": log.created_at.isoformat() if log.created_at else None
@@ -545,11 +525,11 @@ def get_trips_logs(
         ]
 
         trip_data = {
-            "id": str(trip_obj.id),
-            "trucking_company_id": str(trip_obj.trucking_company_id),
+            "id": encode_id(trip_obj.id),
+            "trucking_company_id": encode_id(trip_obj.trucking_company_id),
             "ref": trip_obj.ref,
             "layout_ref": trip_obj.layout_ref,
-            "driver_id": str(trip_obj.driver_id) if trip_obj.driver_id else None,
+            "driver_id": encode_id(trip_obj.driver_id) if trip_obj.driver_id else None,
             "license_plate": trip_obj.license_plate,
             "status": trip_obj.status,
             "summary": trip_obj.summary,

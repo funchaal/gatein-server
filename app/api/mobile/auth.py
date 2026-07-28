@@ -16,6 +16,9 @@ from app.schemas.auth import (
     EmailSendRequest, EmailVerifyRequest
 )
 from config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -116,7 +119,10 @@ def send_otp(body: OTPSendRequest):
     """
     code = random.randint(1000, 9999)
     redis_client.setex(f"otp:{body.tax_id}", 300, json.dumps({"code": code, "phone": body.phone}))
-    print(f"DEBUG OTP {body.tax_id}: {code}")
+    if settings.is_development:
+        logger.debug(f"[DEV] OTP {body.tax_id}: {code}")
+    else:
+        logger.debug(f"OTP gerado para tax_id {body.tax_id[:3]}***")
     return {"success": True}
 
 
@@ -220,7 +226,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         return {"success": True, "data": {"token": token, "user": {"tax_id": user.tax_id, "name": user.name, "phone": user.phone, "email": user.email}}}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        logger.exception(f"Erro ao registrar usuário {body.tax_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": "Erro ao finalizar o cadastro. Tente novamente."}
+        )
 
 
 @router.post(
@@ -333,7 +343,10 @@ def send_email_code(body: EmailSendRequest, current_user: User = Depends(get_cur
     """
     code = random.randint(1000, 9999)
     redis_client.setex(f"otp_email:{current_user.tax_id}", 300, json.dumps({"code": code, "email": body.email}))
-    print(f"DEBUG OTP EMAIL {current_user.tax_id}: {code}")
+    if settings.is_development:
+        logger.debug(f"[DEV] OTP EMAIL {current_user.tax_id}: {code}")
+    else:
+        logger.debug(f"OTP email gerado para tax_id {current_user.tax_id[:3]}***")
     return {"success": True}
 
 
@@ -408,13 +421,13 @@ def staging_login(body: StagingLoginRequest, db: Session = Depends(get_db)):
       4. Valida device trust (mesmo comportamento do login normal).
       5. Emite JWT com `company_id` adicional no payload.
     """
-    # 1. Trava de segurança: nunca em produção
-    if settings.IS_PROD:
+    # 1. Trava de segurança: apenas no ambiente de homologação
+    if not settings.is_homologation:
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "FORBIDDEN",
-                "message": "Este endpoint só está disponível no ambiente de homologação (PROD=False)."
+                "message": "Este endpoint só está disponível no ambiente de homologação (ENVIRONMENT=homologation)."
             }
         )
 

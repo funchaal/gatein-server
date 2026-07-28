@@ -6,7 +6,9 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 from app.core.database import get_db
+from app.core.database import get_db
 from app.core.dependencies import get_current_company_user
+from app.core.sqids import encode_id
 from app.models import CompanyUser, Company, Appointment, AppointmentLayout
 
 router = APIRouter()
@@ -42,7 +44,7 @@ class SyncDashboardStatsSchema(BaseModel):
 
 class SyncAppointmentSchemaSummary(BaseModel):
     """Schema mapping registered layout templates for appointment forms."""
-    id: int
+    id: str
     title: str
     ref: str
 
@@ -109,8 +111,7 @@ def sync_dashboard(
         )
 
         schemas = db.query(AppointmentLayout).filter_by(terminal_id=company_id).all()
-        # Fallback for old layouts that might have 'operation_type' or not.
-        schemas_list = [{"id": s.id, "title": s.title, "ref": s.ref} for s in schemas]
+        schemas_list = [{"id": encode_id(s.id), "title": s.title, "ref": s.ref} for s in schemas]
 
         recent_appointments = (
             db.query(Appointment)

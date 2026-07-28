@@ -8,6 +8,7 @@ from sqlalchemy import select, func, and_, case, cast, Float
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.sqids import encode_id
 from app.models import Company, User, Appointment, Trip, Terminal
 
 router = APIRouter()
@@ -56,7 +57,7 @@ def serialize_company(company, distance_km=None, appointment_count=0, trip_count
         logo = company.config.get('logo') or company.config.get('logo_url') or company.config.get('icon_url')
     
     return {
-        "id": str(company.id),
+        "id": encode_id(company.id),
         "name": company.name,
         "branch_name": company.branch_name,
         "type": company.type,

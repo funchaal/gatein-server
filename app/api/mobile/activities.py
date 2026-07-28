@@ -8,9 +8,11 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.sqids import encode_id, decode_id
 from app.models import (
     User, Appointment, Trip, Terminal, TruckingCompany, 
-    AppointmentLayout, TicketLayout, TripLayout, AppointmentLog, TripLog
+    AppointmentLayout, TicketLayout, TripLayout, AppointmentLog, TripLog,
+    AppointmentEvent, TripEvent, SafetyIntegration
 )
 
 router = APIRouter()
@@ -39,6 +41,7 @@ class AppointmentResponseSchema(BaseModel):
     start_tolerance: int
     end_tolerance: int
     custom_data: Optional[Dict[str, Any]] = None
+    is_safety_integration_pending: Optional[bool] = None
     tickets: List[TicketResponseSchema]
 
 class AddressSchema(BaseModel):
@@ -81,6 +84,10 @@ class TerminalResponseSchema(BaseModel):
     use_remote_checkin: bool
     address: AddressSchema
     geofence: Optional[Dict[str, Any]] = None
+    safety_integration_active: bool = False
+    safety_integration_video_url: Optional[str] = None
+    safety_integration_form_url: Optional[str] = None
+    safety_integration_blocks_checkin: bool = False
 
 class TruckingCompanyResponseSchema(BaseModel):
     """Schema representing trucking company details."""
@@ -124,7 +131,7 @@ class ActivitiesResponse(BaseModel):
 class MobileLogEventItem(BaseModel):
     """Individual item logging a specific mobile user interaction event."""
     activity_type: Literal["appointment", "trip"]
-    activity_id: uuid.UUID
+    activity_id: str
     event: Literal["viewed", "clicked"]
     message: Optional[str] = None
     json_data: Optional[dict] = None
@@ -144,7 +151,7 @@ class SimpleSuccessResponse(BaseModel):
 def serialize_ticket(t) -> dict:
     """Serializes Ticket instance to dict format."""
     return {
-        "id": str(t.id),
+        "id": encode_id(t.id),
         "layout_ref": t.layout_ref,
         "content": t.content,
         "created_at": t.created_at.isoformat()
@@ -153,10 +160,10 @@ def serialize_ticket(t) -> dict:
 def serialize_appointment(a) -> dict:
     """Serializes Appointment instance to dict format."""
     return {
-        "id": str(a.id),
+        "id": encode_id(a.id),
         "type": "appointment",
         "ref": a.ref,
-        "terminal_id": str(a.terminal_id),
+        "terminal_id": encode_id(a.terminal_id),
         "layout_ref": a.layout_ref,
         "status": a.status,
         "summary": a.summary,
@@ -166,16 +173,17 @@ def serialize_appointment(a) -> dict:
         "start_tolerance": a.start_tolerance,
         "end_tolerance": a.end_tolerance,
         "custom_data": a.custom_data,
+        "is_safety_integration_pending": getattr(a, 'is_safety_integration_pending', None),
         "tickets": [serialize_ticket(t) for t in a.tickets]
     }
 
 def serialize_trip(t) -> dict:
     """Serializes Trip instance to dict format."""
     return {
-        "id": str(t.id),
+        "id": encode_id(t.id),
         "type": "trip",
         "ref": t.ref,
-        "trucking_company_id": str(t.trucking_company_id),
+        "trucking_company_id": encode_id(t.trucking_company_id),
         "layout_ref": t.layout_ref,
         "status": t.status,
         "summary": t.summary,
@@ -215,7 +223,7 @@ def serialize_terminal(term) -> dict:
     if term.config:
         logo = term.config.get('logo') or term.config.get('logo_url') or term.config.get('icon_url')
     return {
-        "id": str(term.id),
+        "id": encode_id(term.id),
         "name": term.name,
         "branch_name": term.branch_name,
         "logo_url": logo,
@@ -231,6 +239,10 @@ def serialize_terminal(term) -> dict:
             "lng": term.address_lng,
         },
         "geofence": term.geofence if (term.use_remote_checkin and term.geofence) else None,
+        "safety_integration_active": term.config.get('safety_integration_active', False) if term.config else False,
+        "safety_integration_video_url": term.config.get('safety_integration_video_url') if term.config else None,
+        "safety_integration_form_url": term.config.get('safety_integration_form_url') if term.config else None,
+        "safety_integration_blocks_checkin": term.config.get('safety_integration_blocks_checkin', False) if term.config else False,
     }
 
 def serialize_trucking_company(truck) -> dict:
@@ -239,7 +251,7 @@ def serialize_trucking_company(truck) -> dict:
     if truck.config:
         logo = truck.config.get('logo') or truck.config.get('logo_url') or truck.config.get('icon_url')
     return {
-        "id": str(truck.id),
+        "id": encode_id(truck.id),
         "name": truck.name,
         "branch_name": truck.branch_name,
         "logo_url": logo,
@@ -358,6 +370,32 @@ def get_activities(
     ticket_layouts = db.query(TicketLayout).filter(TicketLayout.terminal_id.in_(terminal_ids)).all() if terminal_ids else []
     trip_layouts = db.query(TripLayout).filter(TripLayout.trucking_company_id.in_(trucking_ids)).all() if trucking_ids else []
 
+    # 5.5 Fetch Safety Integrations
+    safety_integrations = []
+    if terminal_ids:
+        safety_integrations = db.query(SafetyIntegration).filter(
+            SafetyIntegration.tax_id == current_user.tax_id,
+            SafetyIntegration.company_id.in_(terminal_ids)
+        ).all()
+    
+    completed_integrations_set = set()
+    now = datetime.now(timezone.utc)
+    for si in safety_integrations:
+        if si.expires_at is None or si.expires_at > now:
+            completed_integrations_set.add(si.company_id)
+
+    # 5.6 Inject is_safety_integration_pending into appointments
+    terminals_dict = {t.id: t for t in terminals}
+    for a in appointments:
+        term = terminals_dict.get(a.terminal_id)
+        if term and term.config and term.config.get('safety_integration_active'):
+            if a.terminal_id not in completed_integrations_set:
+                a.is_safety_integration_pending = True
+            else:
+                a.is_safety_integration_pending = False
+        else:
+            a.is_safety_integration_pending = False
+
     appt_layouts_dict = {}
     for l in appt_layouts:
         if (l.terminal_id, l.ref) in appt_layout_refs:
@@ -384,8 +422,8 @@ def get_activities(
         "data": {
             "appointments": [serialize_appointment(a) for a in appointments],
             "trips": [serialize_trip(t) for t in trips],
-            "terminals": {str(term.id): serialize_terminal(term) for term in terminals},
-            "trucking_companies": {str(truck.id): serialize_trucking_company(truck) for truck in trucking_companies},
+            "terminals": {encode_id(term.id): serialize_terminal(term) for term in terminals},
+            "trucking_companies": {encode_id(truck.id): serialize_trucking_company(truck) for truck in trucking_companies},
             "layouts": {
                 "appointment": appt_layouts_dict,
                 "ticket": ticket_layouts_dict,
@@ -413,10 +451,18 @@ def log_mobile_activities_events(
     if not payload.events:
         return {"success": True, "message": "Nenhum evento enviado."}
 
-    # Gather activity IDs by type to query in batch
-    appt_ids = [item.activity_id for item in payload.events if item.activity_type == "appointment"]
-    trip_ids = [item.activity_id for item in payload.events if item.activity_type == "trip"]
-    
+    # Decode IDs
+    appt_ids = []
+    trip_ids = []
+    for item in payload.events:
+        try:
+            if item.activity_type == "appointment":
+                appt_ids.append(decode_id(item.activity_id))
+            elif item.activity_type == "trip":
+                trip_ids.append(decode_id(item.activity_id))
+        except (ValueError, Exception):
+            pass
+
     appts_map = {}
     if appt_ids:
         appts = db.query(Appointment).filter(
@@ -434,29 +480,85 @@ def log_mobile_activities_events(
         trips_map = {t.id: t for t in trips}
 
     for item in payload.events:
+        try:
+            decoded_id = decode_id(item.activity_id)
+        except (ValueError, Exception):
+            continue
+
         if item.activity_type == "appointment":
-            appt = appts_map.get(item.activity_id)
+            appt = appts_map.get(decoded_id)
             if appt:
                 log = AppointmentLog(
                     company_id=appt.terminal_id,
                     appointment_id=appt.id,
-                    event=item.event,
-                    message=item.message or f"Agendamento {item.event} no app móvel.",
-                    json=item.json_data or {}
+                    event=AppointmentEvent.VIEWED if item.event == "viewed" else AppointmentEvent.CLICKED,
                 )
                 db.add(log)
         elif item.activity_type == "trip":
-            trip = trips_map.get(item.activity_id)
-            if trip:
-                log = TripLog(
-                    company_id=trip.trucking_company_id,
-                    trip_id=trip.id,
+            if trips_map.get(decoded_id):
+                db.add(TripLog(
+                    company_id=trips_map[decoded_id].trucking_company_id,
+                    trip_id=decoded_id,
                     event=item.event,
-                    message=item.message or f"Viagem {item.event} no app móvel.",
-                    json=item.json_data or {}
-                )
-                db.add(log)
-                
-    db.commit()
-    return {"success": True, "message": "Eventos registrados com sucesso."}
+                    message=item.message,
+                    json=item.json_data
+                ))
 
+    db.commit()
+    return {"success": True, "message": "Eventos logados com sucesso."}
+
+
+@router.post(
+    "/integrations/{terminal_id}/complete",
+    response_model=SimpleSuccessResponse,
+    summary="Complete Safety Integration",
+    description="Registra que o motorista concluiu a integração de segurança (assistiu o vídeo ou respondeu o formulário) para um terminal específico."
+)
+def complete_safety_integration(
+    terminal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        decoded_terminal_id = decode_id(terminal_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Terminal ID inválido.")
+
+    terminal = db.query(Terminal).filter(Terminal.id == decoded_terminal_id).first()
+    if not terminal:
+        raise HTTPException(status_code=404, detail="Terminal não encontrado.")
+
+    si = db.query(SafetyIntegration).filter(
+        SafetyIntegration.tax_id == current_user.tax_id,
+        SafetyIntegration.company_id == decoded_terminal_id
+    ).first()
+
+    now = datetime.now(timezone.utc)
+    # Default expiry: 1 year from now
+    expires_at = now + timedelta(days=365)
+
+    if not si:
+        si = SafetyIntegration(
+            tax_id=current_user.tax_id,
+            company_id=decoded_terminal_id,
+            watched_at=now,
+            expires_at=expires_at
+        )
+        db.add(si)
+    else:
+        si.watched_at = now
+        si.expires_at = expires_at
+
+    try:
+        db.commit()
+        return {"success": True, "message": "Integração registrada com sucesso."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "Erro ao salvar a integração de segurança.",
+                "error_details": str(e)
+            }
+        )

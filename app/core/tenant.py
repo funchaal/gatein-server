@@ -57,21 +57,21 @@ current_company_id_ctx: ContextVar[Optional[str]] = ContextVar(
 )
 
 
-# ─── Event Listener (STAGING ONLY) ───────────────────────────────────────────
+# ─── Event Listener (HOMOLOGATION ONLY) ───────────────────────────────────────
 
-if not settings.IS_PROD:
+if settings.is_homologation:
     logger.warning(
-        "[STAGING] Isolamento multi-tenant via ORM ATIVADO. "
-        "Todas as queries em modelos com TenantModelMixin serao "
+        "[HOMOLOGATION] Isolamento multi-tenant via ORM ATIVADO. "
+        "Todas as queries em modelos com TenantModelMixin serão "
         "automaticamente filtradas por company_id."
     )
 
     @event.listens_for(Session, "do_orm_execute")
-    def auto_filter_by_company_in_staging(execute_state: ORMExecuteState):
+    def auto_filter_by_company_in_homologation(execute_state: ORMExecuteState):
         """
-        Intercepta toda execucao ORM em sessoes SQLAlchemy.
+        Intercepta toda execução ORM em sessões SQLAlchemy.
         Se `current_company_id_ctx` tiver valor, adiciona automaticamente
-        a clausula WHERE company_id = :company_id em qualquer query que
+        a cláusula WHERE company_id = :company_id em qualquer query que
         envolva um modelo herdeiro de TenantModelMixin.
         """
         company_id = current_company_id_ctx.get()
@@ -85,4 +85,4 @@ if not settings.IS_PROD:
                 )
             )
 else:
-    logger.info("[PROD] Isolamento multi-tenant INATIVO. Ambiente de producao.")
+    logger.info(f"[{settings.ENVIRONMENT.upper()}] Isolamento multi-tenant via ORM inativo.")

@@ -4,7 +4,9 @@ from typing import Any, Optional, List
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.database import get_db
 from app.core.dependencies import require_permission
+from app.core.sqids import encode_id
 from app.models import CompanyUser, TicketLayout
 
 router = APIRouter()
@@ -22,7 +24,7 @@ class LayoutUpsertRequest(BaseModel):
 
 class LayoutResponseData(BaseModel):
     """Schema detailing individual layout metadata configuration parameters."""
-    id: int
+    id: str
     ref: str
     title: str
     layout: Any
@@ -80,7 +82,7 @@ def get_ticket_layouts(
     
     return {"success": True, "data": [
         {
-            "id": l.id,
+            "id": encode_id(l.id),
             "ref": l.ref,
             "title": l.title,
             "layout": l.layout,
@@ -114,7 +116,7 @@ def get_ticket_layout(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND"})
 
     return {"success": True, "data": {
-        "id": layout_obj.id,
+        "id": encode_id(layout_obj.id),
         "ref": layout_obj.ref,
         "title": layout_obj.title,
         "layout": layout_obj.layout,

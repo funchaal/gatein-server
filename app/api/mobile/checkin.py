@@ -17,7 +17,8 @@ from uuid import UUID
 
 from app.core.database import get_db, SessionLocal
 from app.core.dependencies import get_current_user
-from app.models import User, Appointment, AppointmentLog, Ticket, TicketLayout
+from app.core.sqids import decode_id, encode_id
+from app.models import User, Appointment, AppointmentLog, Ticket, TicketLayout, AppointmentEvent
 from app.schemas.checkin import TicketItem, CheckinResponse
 from app.api.sockets.connection import sio
 from app.api.sockets.handlers.checkin import active_terminals
@@ -201,7 +202,7 @@ async def run_async_checkin(terminal_id: UUID, target_sid: str, tax_id: str):
     ),
 )
 async def process_checkin(
-    terminal_id: UUID,
+    terminal_id: str,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -210,14 +211,19 @@ async def process_checkin(
     Triggers remote check-in for the driver user at the specified terminal.
     Delegates Socket.IO handshake to a background task and responds immediately.
     """
-    terminal_id_str = str(terminal_id)
+    try:
+        decoded_terminal_id = decode_id(terminal_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de terminal inválido.")
+
+    terminal_id_str = str(decoded_terminal_id)
 
     if terminal_id_str not in active_terminals:
         raise HTTPException(status_code=503, detail="Terminal encontra-se offline.")
 
     target_sid = active_terminals[terminal_id_str]
 
-    background_tasks.add_task(run_async_checkin, terminal_id, target_sid, current_user.tax_id)
+    background_tasks.add_task(run_async_checkin, decoded_terminal_id, target_sid, current_user.tax_id)
 
     return CheckinResponse(
         success=True,
@@ -241,7 +247,7 @@ async def process_checkin(
     tags=["Websocket & Checkin"],
 )
 def cancel_checkin(
-    appointment_id: UUID,
+    appointment_id: str,
     body: CancelCheckinRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -254,8 +260,13 @@ def cancel_checkin(
     - Registra um AppointmentLog com o evento 'checkin_cancelled' e o motivo.
     - Dispara notificação push informando o motorista do cancelamento.
     """
+    try:
+        decoded_appt_id = decode_id(appointment_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de agendamento inválido.")
+
     appointment = db.query(Appointment).filter(
-        Appointment.id == appointment_id,
+        Appointment.id == decoded_appt_id,
         Appointment.user_tax_id == current_user.tax_id,
     ).first()
 
@@ -275,14 +286,7 @@ def cancel_checkin(
     log_entry = AppointmentLog(
         company_id=appointment.terminal_id,
         appointment_id=appointment.id,
-        event="checkin_cancelled",
-        message=f"Check-in cancelado pelo motorista. Motivo: {body.reason}",
-        json={
-            "previous_status": old_status,
-            "reason": body.reason,
-            "cancelled_by_tax_id": current_user.tax_id,
-            "cancelled_at": datetime.now(timezone.utc).isoformat(),
-        },
+        event=AppointmentEvent.CHECKIN_CANCELLED,
     )
     db.add(log_entry)
     db.commit()
@@ -298,7 +302,7 @@ def cancel_checkin(
             f"Motivo: {body.reason}. Seu agendamento em {terminal_name} voltou para Agendado.",
             data={
                 "type": "CHECKIN_CANCELLED",
-                "appointment_id": str(appointment.id),
+                "appointment_id": encode_id(appointment.id),
                 "reason": body.reason,
             },
         )
@@ -309,6 +313,6 @@ def cancel_checkin(
     return {
         "success": True,
         "message": "Check-in cancelado com sucesso. Agendamento revertido para SCHEDULED.",
-        "appointment_id": str(appointment.id),
+        "appointment_id": appointment_id,
         "new_status": "ACTIVE",
     }

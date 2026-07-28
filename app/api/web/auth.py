@@ -7,6 +7,7 @@ import secrets as secrets_module
 from app.core.database import get_db
 from app.core.security import verify_secret, generate_jwt, hash_secret
 from app.core.dependencies import get_current_company_user, get_current_admin_company_user
+from app.core.sqids import encode_id
 from app.models import CompanyUser, StagingPassword
 from app.schemas.auth import WebLoginRequest, WebDevResetPasswordRequest
 from config import settings
@@ -88,7 +89,7 @@ def login(body: WebLoginRequest, db: Session = Depends(get_db)):
                 "username": user.username,
                 "permissions": user.permissions,
                 "is_admin": user.is_admin,
-                "company_id": str(user.company_id), 
+                "company_id": encode_id(user.company_id), 
                 "company_type": user.company.type
             }
         }
@@ -113,7 +114,7 @@ def restore_session(current_user: CompanyUser = Depends(get_current_company_user
                 "username": current_user.username,
                 "permissions": current_user.permissions,
                 "is_admin": current_user.is_admin,
-                "company_id": str(current_user.company_id), 
+                "company_id": encode_id(current_user.company_id), 
                 "company_type": current_user.company.type
             }
         }
@@ -220,7 +221,7 @@ def generate_staging_password(
                 "Guarde esta senha com segurança. "
                 "Ela não poderá ser recuperada — apenas regerada, o que revogará a atual."
             ),
-            "company_id": str(current_user.company_id)
+            "company_id": encode_id(current_user.company_id)
         }
     }
 

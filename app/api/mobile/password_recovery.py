@@ -17,6 +17,9 @@ from app.schemas.auth import (
 )
 from config import settings
 from jose import jwt, JWTError
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -105,7 +108,10 @@ def forgot_password_request(body: ForgotPasswordRequest, db: Session = Depends(g
     }
     redis_client.setex(redis_key, 600, json.dumps(redis_data))
     
-    print(f"DEBUG RECOVERY CODE {body.tax_id}: {code}")
+    if settings.is_development:
+        logger.debug(f"[DEV] RECOVERY CODE {body.tax_id}: {code}")
+    else:
+        logger.info(f"Código de recuperação gerado para tax_id {body.tax_id[:3]}***")
     
     phone = user.phone or ""
     censored_phone = f"{phone[:3]}***{phone[-2:]}" if len(phone) >= 5 else "***"

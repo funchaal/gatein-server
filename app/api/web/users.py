@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin_company_user
+from app.core.database import get_db
+from app.core.dependencies import get_current_admin_company_user
 from app.core.security import hash_secret
+from app.core.sqids import encode_id, decode_id
 from app.models import CompanyUser
 
 router = APIRouter()
@@ -65,7 +68,7 @@ def get_users(
     users = db.query(CompanyUser).filter_by(company_id=current_user.company_id).all()
     return {"success": True, "data": [
         {
-            "id": str(u.id),
+            "id": encode_id(u.id),
             "username": u.username,
             "name": u.name,
             "is_admin": u.is_admin,
@@ -103,7 +106,7 @@ def create_user(
         db.add(new_user)
         db.commit()
         return {"success": True, "data": {
-            "id": str(new_user.id),
+            "id": encode_id(new_user.id),
             "username": new_user.username,
             "name": new_user.name,
             "is_admin": new_user.is_admin,
@@ -120,12 +123,17 @@ def create_user(
 
 @router.put("/users/{user_id}", response_model=UserSingleResponse)
 def update_user(
-    user_id: uuid.UUID,
+    user_id: str,
     body: UpdateUserRequest,
     current_user: CompanyUser = Depends(get_current_admin_company_user),
     db: Session = Depends(get_db)
 ):
-    target = db.query(CompanyUser).filter_by(id=user_id, company_id=current_user.company_id).first()
+    try:
+        decoded_id = decode_id(user_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de usuário inválido.")
+
+    target = db.query(CompanyUser).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -152,7 +160,7 @@ def update_user(
 
         db.commit()
         return {"success": True, "data": {
-            "id": str(target.id),
+            "id": encode_id(target.id),
             "username": target.username,
             "name": target.name,
             "is_admin": target.is_admin,
@@ -174,14 +182,19 @@ def update_user(
     description="Deletes a company user by ID. A user cannot delete their own account."
 )
 def delete_user(
-    user_id: uuid.UUID,
+    user_id: str,
     current_user: CompanyUser = Depends(get_current_admin_company_user),
     db: Session = Depends(get_db)
 ):
     """
     Deletes a target company user account.
     """
-    if current_user.id == user_id:
+    try:
+        decoded_id = decode_id(user_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de usuário inválido.")
+
+    if current_user.id == decoded_id:
         raise HTTPException(
             status_code=400, 
             detail={
@@ -190,7 +203,7 @@ def delete_user(
             }
         )
 
-    target = db.query(CompanyUser).filter_by(id=user_id, company_id=current_user.company_id).first()
+    target = db.query(CompanyUser).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -200,7 +213,7 @@ def delete_user(
     try:
         target.is_active = False
         db.commit()
-        return {"success": True, "data": {"status": "deleted", "id": str(user_id)}}
+        return {"success": True, "data": {"status": "deleted", "id": user_id}}
     except Exception as e:
         db.rollback()
         raise HTTPException(

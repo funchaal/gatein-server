@@ -28,6 +28,17 @@ import app.core.active  # noqa: F401
 
 from config import settings
 
+# Configuração Global de Logging
+log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+if settings.is_development and settings.LOG_LEVEL == "INFO":
+    log_level = logging.DEBUG
+
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,8 +46,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Gerencia o ciclo de vida do servidor: inicia e para o APScheduler."""
-    env_label = "PRODUCAO" if settings.IS_PROD else "STAGING (homologacao)"
-    logger.info(f"[AMBIENTE] Servidor iniciado em modo: {env_label}")
+    logger.info(f"[AMBIENTE] Servidor iniciado em modo: {settings.ENVIRONMENT.upper()}")
     start_scheduler()
     yield
     stop_scheduler()
@@ -46,16 +56,16 @@ async def lifespan(application: FastAPI):
 fastapi_app = FastAPI(
     title="GateIn API",
     version="1.0.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
+    docs_url=None if not settings.is_development else "/docs",
+    redoc_url=None if not settings.is_development else "/redoc",
+    openapi_url=None if not settings.is_development else "/openapi.json",
     lifespan=lifespan,
 )
 
-# Middleware CORS (Configurado apenas uma vez)
+# Middleware CORS (Configurado via settings.ALLOWED_ORIGINS)
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,5 +84,5 @@ app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
 if __name__ == "__main__":
     import uvicorn
     # Ele vai rodar o "app" que agora contém tanto o Socket.IO quanto o FastAPI
-    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=settings.is_development)
 

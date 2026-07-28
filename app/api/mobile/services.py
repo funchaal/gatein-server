@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.security import generate_jwt
+from app.core.sqids import encode_id, decode_id
 from app.models import User, CompanyService, AllowedDomain
 
 router = APIRouter()
@@ -41,8 +42,8 @@ class ServiceListResponse(BaseModel):
     data: List[ServiceResponseData]
 
 class ServiceIdsRequest(BaseModel):
-    """Payload carrying a list of UUID service identifiers to fetch."""
-    ids: List[uuid.UUID]
+    """Payload carrying a list of service identifiers to fetch."""
+    ids: List[str]
 
 
 # --- ROTAS ---
@@ -54,18 +55,23 @@ class ServiceIdsRequest(BaseModel):
     description="Lists active services linked to a specific company ID."
 )
 def get_services_by_company(
-    company_id: uuid.UUID,
+    company_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Fetches and filters active services provided by a company.
     """
+    try:
+        decoded_id = decode_id(company_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de empresa inválido.")
+
     services = (
         db.query(CompanyService)
         .join(AllowedDomain, CompanyService.domain_id == AllowedDomain.id)
         .filter(
-            CompanyService.company_id == company_id,
+            CompanyService.company_id == decoded_id,
             CompanyService.is_active == True,
             AllowedDomain.is_active == True
         )
@@ -73,8 +79,8 @@ def get_services_by_company(
     )
     return {"success": True, "data": [
         {
-            "id": str(s.id),
-            "company_id": str(s.company_id),
+            "id": encode_id(s.id),
+            "company_id": encode_id(s.company_id),
             "title": s.title,
             "description": s.description,
             "url": s.url,

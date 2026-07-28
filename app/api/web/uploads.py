@@ -8,6 +8,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from app.core.dependencies import require_permission
+from app.core.sqids import encode_id
 from app.models import CompanyUser
 from config import settings
 
@@ -113,7 +114,7 @@ def presign_company_logo(
 
     extension = "svg" if content_type == "image/svg+xml" else "webp"
     # Include company_id only — prevents collisions and gives a stable, predictable path
-    object_key = f"companies-profile-pictures/{current_user.company_id}.{extension}"
+    object_key = f"companies-profile-pictures/{encode_id(current_user.company_id)}.{extension}"
 
     s3 = _get_s3_client()
     try:

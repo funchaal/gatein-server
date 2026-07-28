@@ -8,7 +8,8 @@ from sqlalchemy import select, func, and_, or_, case, cast, Float
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models import User, Company, Terminal, Appointment, Trip, Announcement, AnnouncementLog
+from app.core.sqids import encode_id, decode_id
+from app.models import User, Company, Terminal, Appointment, Trip, Announcement, AnnouncementLog, AnnouncementEvent
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ class SimpleSuccessResponse(BaseModel):
 
 class MobileAnnouncementLogEventItem(BaseModel):
     """Individual event parameter mapping an announcement interaction trace."""
-    announcement_id: uuid.UUID
+    announcement_id: str
     event: Literal["viewed"]
     message: Optional[str] = None
     json_data: Optional[dict] = None
@@ -218,8 +219,8 @@ def get_mobile_announcements(
             logo = comp.config.get('logo') or comp.config.get('logo_url') or comp.config.get('icon_url')
             
         response_data.append({
-            "id": str(a.id),
-            "company_id": str(a.company_id),
+            "id": encode_id(a.id),
+            "company_id": encode_id(a.company_id),
             "title": a.title,
             "subtitle": a.subtitle,
             "description": a.description,
@@ -253,19 +254,28 @@ def log_mobile_announcement_events(
         return {"success": True, "message": "Nenhum evento enviado."}
 
     # Batch query announcements to optimize database hits
-    ann_ids = [item.announcement_id for item in payload.events]
+    ann_ids = []
+    for item in payload.events:
+        try:
+            ann_ids.append(decode_id(item.announcement_id))
+        except (ValueError, Exception):
+            pass
+
     existing_anns = db.query(Announcement).filter(Announcement.id.in_(ann_ids)).all() if ann_ids else []
     ann_map = {a.id: a for a in existing_anns}
 
     for item in payload.events:
-        ann = ann_map.get(item.announcement_id)
+        try:
+            decoded_id = decode_id(item.announcement_id)
+        except (ValueError, Exception):
+            continue
+
+        ann = ann_map.get(decoded_id)
         if ann:
             log = AnnouncementLog(
                 announcement_id=ann.id,
                 user_id=current_user.id,
-                event=item.event,
-                message=item.message or "Aviso visualizado no app móvel.",
-                json=item.json_data or {}
+                event=AnnouncementEvent.VIEWED,
             )
             db.add(log)
 

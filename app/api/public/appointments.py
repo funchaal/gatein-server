@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
 from app.core.sqids import encode_id, decode_id
-from app.models import Company, Driver, Appointment, AppointmentLog, AppointmentLayout, AppointmentEvent
+from app.models import Company, Driver, Appointment, AppointmentLog, AppointmentLayout, AppointmentEvent, SafetyIntegration
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,6 +34,15 @@ class DriverSchema(BaseModel):
     tax_id: str = Field(..., description="CPF ou CNPJ do motorista (Apenas números)")
     driver_license_number: str = Field(..., description="Número da CNH")
     license_category: str = Field(..., description="Categoria da CNH (ex: E)")
+    safety_integration: Optional[bool] = Field(None, description="Informa se o motorista tem integração de segurança ativa")
+    integration_expires_at: Optional[datetime] = Field(None, description="Data de expiração da integração (Obrigatório se safety_integration = true)")
+    integration_watched_at: Optional[datetime] = Field(None, description="Data de realização da integração (Opcional)")
+
+    @model_validator(mode='after')
+    def validate_safety_integration(self):
+        if self.safety_integration is True and not self.integration_expires_at:
+            raise ValueError("integration_expires_at is required when safety_integration is true")
+        return self
 
 class AppointmentBaseSchema(BaseModel):
     """Schema representing core parameters of an appointment."""
@@ -265,6 +274,30 @@ def create_appointments(
             custom_data=item.appointment.custom_data,
         )
         db.add(appt)
+        db.flush()
+
+        # Process Safety Integration
+        if item.driver.safety_integration is not None:
+            si = db.query(SafetyIntegration).filter(
+                SafetyIntegration.tax_id == driver.tax_id,
+                SafetyIntegration.company_id == company.id
+            ).first()
+            if item.driver.safety_integration is True:
+                if not si:
+                    si = SafetyIntegration(
+                        tax_id=driver.tax_id,
+                        company_id=company.id,
+                        watched_at=item.driver.integration_watched_at,
+                        expires_at=item.driver.integration_expires_at
+                    )
+                    db.add(si)
+                else:
+                    if item.driver.integration_watched_at:
+                        si.watched_at = item.driver.integration_watched_at
+                    si.expires_at = item.driver.integration_expires_at
+            else:
+                if si:
+                    db.delete(si)
         db.flush()
 
         create_appointment_log(
@@ -686,3 +719,68 @@ def ping_appointments(
             "pinged_at": now.isoformat()
         }
     }
+
+
+class DriverSafetyIntegrationPayload(BaseModel):
+    tax_id: str = Field(..., description="CPF do motorista (Apenas números)")
+    active: bool = Field(..., description="Se a integração de segurança está ativa")
+    expires_at: Optional[datetime] = Field(None, description="Data de expiração da integração. Obrigatória se active for true.")
+    watched_at: Optional[datetime] = Field(None, description="Data em que a integração foi realizada.")
+
+    @model_validator(mode='after')
+    def validate_safety_integration(self):
+        if self.active is True and not self.expires_at:
+            raise ValueError("expires_at is required when active is true")
+        return self
+
+@router.post(
+    "/drivers/safety-integration",
+    status_code=200,
+    summary="Atualizar Integração de Segurança",
+    description="Permite enviar diretamente o status de integração de segurança de um motorista para a empresa (terminal)."
+)
+def update_driver_safety_integration(
+    payload: Union[DriverSafetyIntegrationPayload, List[DriverSafetyIntegrationPayload]],
+    db: Session = Depends(get_db),
+    company: Company = Depends(get_company_from_api_key)
+):
+    items = payload if isinstance(payload, list) else [payload]
+    
+    for item in items:
+        si = db.query(SafetyIntegration).filter(
+            SafetyIntegration.tax_id == item.tax_id,
+            SafetyIntegration.company_id == company.id
+        ).first()
+
+        if item.active is True:
+            if not si:
+                si = SafetyIntegration(
+                    tax_id=item.tax_id,
+                    company_id=company.id,
+                    watched_at=item.watched_at,
+                    expires_at=item.expires_at
+                )
+                db.add(si)
+            else:
+                if item.watched_at:
+                    si.watched_at = item.watched_at
+                si.expires_at = item.expires_at
+        else:
+            if si:
+                db.delete(si)
+        
+        db.flush()
+
+    try:
+        db.commit()
+        return {"success": True, "message": "Status de integração atualizado com sucesso"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "Erro ao atualizar integração.",
+                "error_details": str(e)
+            }
+        )

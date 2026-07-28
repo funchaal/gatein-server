@@ -5,7 +5,9 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.database import get_db
 from app.core.dependencies import get_current_admin_company_user, get_current_company_user, require_permission
+from app.core.sqids import encode_id, decode_id
 from app.models import CompanyUser, CompanyService, AllowedDomain
 from app.tools import extract_domain
 
@@ -27,11 +29,11 @@ class ServiceUpdateRequest(BaseModel):
     icon_url: Optional[str] = None
 
 class ServiceBatchStatusRequest(BaseModel):
-    service_ids: List[uuid.UUID]
+    service_ids: List[str]
     is_active: bool
 
 class ServiceBatchDeleteRequest(BaseModel):
-    service_ids: List[uuid.UUID]
+    service_ids: List[str]
 
 class ServiceResponseData(BaseModel):
     id: str
@@ -90,8 +92,8 @@ def get_services(
         
     return {"success": True, "data": [
         {
-            "id": str(s.id),
-            "company_id": str(s.company_id),
+            "id": encode_id(s.id),
+            "company_id": encode_id(s.company_id),
             "title": s.title,
             "description": s.description,
             "url": s.url,
@@ -138,8 +140,8 @@ def create_service(
         response_data = {
             "success": True,
             "data": {
-                "id": str(new_service.id),
-                "company_id": str(new_service.company_id),
+                "id": encode_id(new_service.id),
+                "company_id": encode_id(new_service.company_id),
                 "title": new_service.title,
                 "description": new_service.description,
                 "url": new_service.url,
@@ -162,12 +164,17 @@ def create_service(
 
 @router.put("/services/{service_id}", response_model=ServiceSingleResponse)
 def update_service(
-    service_id: uuid.UUID,
+    service_id: str,
     body: ServiceUpdateRequest,
     current_user: CompanyUser = Depends(require_permission('services', 'write')),
     db: Session = Depends(get_db)
 ):
-    target = db.query(CompanyService).filter_by(id=service_id, company_id=current_user.company_id).first()
+    try:
+        decoded_id = decode_id(service_id)
+    except (ValueError, Exception):
+        raise HTTPException(status_code=400, detail="ID de serviço inválido.")
+
+    target = db.query(CompanyService).filter_by(id=decoded_id, company_id=current_user.company_id).first()
     if not target:
         raise HTTPException(
             status_code=404, 
@@ -206,8 +213,8 @@ def update_service(
         response_data = {
             "success": True,
             "data": {
-                "id": str(target.id),
-                "company_id": str(target.company_id),
+                "id": encode_id(target.id),
+                "company_id": encode_id(target.company_id),
                 "title": target.title,
                 "description": target.description,
                 "url": target.url,
@@ -242,8 +249,15 @@ def update_services_status(
     """
     Updates is_active properties of requested company services. Validates domain permissions.
     """
+    decoded_ids = []
+    for sid in body.service_ids:
+        try:
+            decoded_ids.append(decode_id(sid))
+        except (ValueError, Exception):
+            pass
+
     targets = db.query(CompanyService).filter(
-        CompanyService.id.in_(body.service_ids),
+        CompanyService.id.in_(decoded_ids),
         CompanyService.company_id == current_user.company_id
     ).all()
     
@@ -271,7 +285,7 @@ def update_services_status(
                 target.is_active = False
             else:
                 target.is_active = body.is_active
-            updated_ids.append(str(target.id))
+            updated_ids.append(encode_id(target.id))
 
         db.commit()
         
@@ -305,8 +319,15 @@ def delete_services(
     if not current_user.can("services", "write"):
         raise HTTPException(status_code=403, detail={"code": "FORBIDDEN"})
 
+    decoded_ids = []
+    for sid in body.service_ids:
+        try:
+            decoded_ids.append(decode_id(sid))
+        except (ValueError, Exception):
+            pass
+
     targets = db.query(CompanyService).filter(
-        CompanyService.id.in_(body.service_ids),
+        CompanyService.id.in_(decoded_ids),
         CompanyService.company_id == current_user.company_id
     ).all()
     
@@ -317,7 +338,7 @@ def delete_services(
         )
 
     try:
-        deleted_ids = [str(t.id) for t in targets]
+        deleted_ids = [encode_id(t.id) for t in targets]
         for target in targets:
             target.is_active = False
         db.commit()
