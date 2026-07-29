@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     JWT_EXPIRATION_DAYS_MOBILE: int = 7
     JWT_EXPIRATION_DAYS_WEB: int = 1
 
-    MASTER_API_KEY: str = "fallback_local_key_se_necessario"
     SUPER_ADMIN_SECRET: str = "senha_super_secreta_de_fallback_apenas_para_dev"
 
     # Caminho para o arquivo JSON da chave privada do Firebase Admin SDK
@@ -76,8 +75,6 @@ class Settings(BaseSettings):
                 raise ValueError("CRITICAL: SECRET_KEY padrão de desenvolvimento não é permitida em ambiente de produção!")
             if self.SUPER_ADMIN_SECRET in ("senha_super_secreta_de_fallback_apenas_para_dev", "1234", ""):
                 raise ValueError("CRITICAL: SUPER_ADMIN_SECRET padrão não é permitida em ambiente de produção!")
-            if self.MASTER_API_KEY in ("fallback_local_key_se_necessario", "sua_chave_super_secreta_aqui_12345", ""):
-                raise ValueError("CRITICAL: MASTER_API_KEY padrão não é permitida em ambiente de produção!")
         return self
 
     class Config:
