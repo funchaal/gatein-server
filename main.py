@@ -9,6 +9,7 @@ import logging
 from app.api.sockets.connection import sio
 
 # Importação de Roteadores Unificados
+from app.api.health import router as health_router
 from app.api.mobile import router as mobile_router
 from app.api.web import router as web_router
 from app.api.public import router as public_router
@@ -72,6 +73,7 @@ fastapi_app.add_middleware(
 )
 
 # Inclusão de Rotas Unificadas
+fastapi_app.include_router(health_router)
 fastapi_app.include_router(mobile_router)
 fastapi_app.include_router(web_router)
 fastapi_app.include_router(public_router)
