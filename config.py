@@ -8,11 +8,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:1234@localhost:5432/gatein_db"
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Supabase (Opcional por ambiente)
-    USE_SUPABASE: bool = False
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
-
     # Lê como int (dias) e expõe como timedelta
     JWT_EXPIRATION_DAYS_MOBILE: int = 7
     JWT_EXPIRATION_DAYS_WEB: int = 1
