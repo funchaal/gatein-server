@@ -2,7 +2,8 @@ from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.core.timezone import ensure_utc
 
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
@@ -12,15 +13,16 @@ from app.models import Company, Driver, Trip, TripLayout, TripLog, TripEvent
 router = APIRouter()
 
 # --- HELPER LOGS ---
-def create_trip_log(db: Session, company_id: Any, trip_id: Any, event: TripEvent):
+def create_trip_log(db: Session, company_id: Any, trip_id: Any, event: TripEvent, message: str = None, json_data: dict = None):
     """
     Utility function to log events for a trip in the database.
-    Columns message and json are kept in schema but not populated.
     """
     log = TripLog(
         company_id=company_id,
         trip_id=trip_id,
         event=event,
+        message=message,
+        json=json_data,
     )
     db.add(log)
 
@@ -44,6 +46,11 @@ class TripBaseSchema(BaseModel):
     start_tolerance: int = Field(0, description="Tolerância de início em minutos")
     end_tolerance: int = Field(0, description="Tolerância de término em minutos")
     custom_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Dados customizados estruturados")
+
+    @field_validator("window_start", "window_end", mode="after")
+    @classmethod
+    def normalize_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return ensure_utc(v)
     
     # Location/Address Details (Origin)
     origin_street: Optional[str] = Field(None, description="Rua de origem")
@@ -320,6 +327,34 @@ def create_trips(
         )
         created_refs.append(new_trip.ref)
 
+        # Dispara notificação push TRIP_ASSIGNED para o motorista
+        if item.driver.tax_id:
+            try:
+                from app.core.firebase import notify_user_by_tax_id
+                from_loc = new_trip.from_location or new_trip.origin_city or "Origem"
+                to_loc = new_trip.to_location or new_trip.destiny_city or "Destino"
+                notify_user_by_tax_id(
+                    db,
+                    tax_id=item.driver.tax_id,
+                    title="Nova viagem atribuída!",
+                    body=f"Você foi escalado para uma nova viagem de {from_loc} para {to_loc}.",
+                    data={
+                        "type": "TRIP_ASSIGNED",
+                        "trip_id": str(new_trip.id),
+                        "ref": new_trip.ref or "",
+                    }
+                )
+                create_trip_log(
+                    db=db,
+                    company_id=company.id,
+                    trip_id=new_trip.id,
+                    event=TripEvent.NOTIFICATION_SENT,
+                    message="Notificação TRIP_ASSIGNED enviada",
+                    json_data={"push_type": "TRIP_ASSIGNED"}
+                )
+            except Exception:
+                pass
+
     try:
         db.commit()
         return {"success": True, "data": {"created_refs": created_refs, "status": "created"}}
@@ -388,6 +423,45 @@ def update_trips(
         )
         
         updated_refs.append(item.ref)
+
+        # Dispara notificação push (TRIP_COMPLETED ou TRIP_ROUTE_UPDATED)
+        driver_tax_id = trip_obj.driver.tax_id if trip_obj.driver else None
+        if driver_tax_id:
+            try:
+                from app.core.firebase import notify_user_by_tax_id
+                from_loc = trip_obj.from_location or trip_obj.origin_city or "Origem"
+                to_loc = trip_obj.to_location or trip_obj.destiny_city or "Destino"
+                
+                if trip_obj.status == "COMPLETED":
+                    push_type = "TRIP_COMPLETED"
+                    title = "Viagem Concluída!"
+                    body = f"Sua viagem com destino a {to_loc} foi finalizada com sucesso."
+                else:
+                    push_type = "TRIP_ROUTE_UPDATED"
+                    title = "Viagem Alterada"
+                    body = f"A rota ou horário da sua viagem ({from_loc} → {to_loc}) foi atualizado."
+
+                notify_user_by_tax_id(
+                    db,
+                    tax_id=driver_tax_id,
+                    title=title,
+                    body=body,
+                    data={
+                        "type": push_type,
+                        "trip_id": str(trip_obj.id),
+                        "ref": trip_obj.ref or "",
+                    }
+                )
+                create_trip_log(
+                    db=db,
+                    company_id=company.id,
+                    trip_id=trip_obj.id,
+                    event=TripEvent.NOTIFICATION_SENT,
+                    message=f"Notificação {push_type} enviada",
+                    json_data={"push_type": push_type}
+                )
+            except Exception:
+                pass
 
     if not_found_refs:
         db.rollback() 
@@ -458,6 +532,34 @@ def delete_trips(
             trip_id=trip_obj.id,
             event=TripEvent.DELETED,
         )
+
+        driver_tax_id = trip_obj.driver.tax_id if trip_obj.driver else None
+        if driver_tax_id:
+            try:
+                from app.core.firebase import notify_user_by_tax_id
+                from_loc = trip_obj.from_location or trip_obj.origin_city or "Origem"
+                to_loc = trip_obj.to_location or trip_obj.destiny_city or "Destino"
+                notify_user_by_tax_id(
+                    db,
+                    tax_id=driver_tax_id,
+                    title="Viagem Cancelada",
+                    body=f"A viagem ({from_loc} → {to_loc}) foi cancelada pela transportadora.",
+                    data={
+                        "type": "TRIP_CANCELLED",
+                        "trip_id": str(trip_obj.id),
+                        "ref": trip_obj.ref or "",
+                    }
+                )
+                create_trip_log(
+                    db=db,
+                    company_id=company.id,
+                    trip_id=trip_obj.id,
+                    event=TripEvent.NOTIFICATION_SENT,
+                    message="Notificação TRIP_CANCELLED enviada",
+                    json_data={"push_type": "TRIP_CANCELLED"}
+                )
+            except Exception:
+                pass
 
     db.commit()
     return {"success": True, "data": {"deleted_count": len(trips), "status": "deleted"}}

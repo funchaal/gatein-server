@@ -44,10 +44,20 @@ logger = logging.getLogger(__name__)
 
 
 
+from app.core.database import Base, engine
+import app.models  # noqa: F401 - Register all ORM models
+
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Gerencia o ciclo de vida do servidor: inicia e para o APScheduler."""
     logger.info(f"[AMBIENTE] Servidor iniciado em modo: {settings.ENVIRONMENT.upper()}")
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("[DATABASE] Sincronização de tabelas efetuada com sucesso.")
+    except Exception as e:
+        logger.error(f"[DATABASE] Erro ao sincronizar tabelas: {e}")
     start_scheduler()
     yield
     stop_scheduler()

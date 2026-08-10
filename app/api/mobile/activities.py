@@ -399,17 +399,17 @@ def get_activities(
     appt_layouts_dict = {}
     for l in appt_layouts:
         if (l.terminal_id, l.ref) in appt_layout_refs:
-            appt_layouts_dict[f"{l.terminal_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
+            appt_layouts_dict[f"{encode_id(l.terminal_id)}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     ticket_layouts_dict = {}
     for l in ticket_layouts:
         if (l.terminal_id, l.ref) in ticket_layout_refs:
-            ticket_layouts_dict[f"{l.terminal_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
+            ticket_layouts_dict[f"{encode_id(l.terminal_id)}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     trip_layouts_dict = {}
     for l in trip_layouts:
         if (l.trucking_company_id, l.ref) in trip_layout_refs:
-            trip_layouts_dict[f"{l.trucking_company_id}_{l.ref}"] = {"title": l.title, "layout": l.layout}
+            trip_layouts_dict[f"{encode_id(l.trucking_company_id)}_{l.ref}"] = {"title": l.title, "layout": l.layout}
 
     # 6. Format response structure
     return {

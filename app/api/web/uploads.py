@@ -49,6 +49,8 @@ def delete_r2_image(image_url_or_key: Optional[str]) -> bool:
         object_key = "announcements/" + image_url_or_key.split("announcements/")[-1]
     elif "companies-profile-pictures/" in image_url_or_key:
         object_key = "companies-profile-pictures/" + image_url_or_key.split("companies-profile-pictures/")[-1]
+    elif "submissions/" in image_url_or_key:
+        object_key = "submissions/" + image_url_or_key.split("submissions/")[-1]
     else:
         object_key = urlparse(image_url_or_key).path.lstrip('/')
 

@@ -28,6 +28,8 @@ class TripEvent(str, enum.Enum):
     CREATED = "created"
     UPDATED = "updated"
     DELETED = "deleted"
+    NOTIFICATION_SENT = "notification_sent"
+    AUTO_DEACTIVATED = "auto_deactivated"
     VIEWED = "viewed"
     CLICKED = "clicked"
 
@@ -203,8 +205,8 @@ class Appointment(Base, ActiveModelMixin):
 
 # Mapa estático — fonte da verdade por tipo de empresa
 COMPANY_TYPE_MODULES = {
-    'terminal':         {'geofence', 'appointment_layouts', 'ticket_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements'},
-    'trucking_company': {'trip_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements'},
+    'terminal':         {'geofence', 'appointment_layouts', 'ticket_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements', 'submissions'},
+    'trucking_company': {'trip_layouts', 'services', 'company_information', 'users', 'api_keys', 'announcements', 'submissions'},
 }
 
 class CompanyUser(Base, ActiveModelMixin):
@@ -603,4 +605,66 @@ class SafetyIntegration(Base, ActiveModelMixin):
     __table_args__ = (
         UniqueConstraint('tax_id', 'company_id', name='unique_safety_integration_per_company'),
         Index('idx_safety_integrations_lookup', 'tax_id', 'company_id'),
+    )
+
+
+# --- MODELOS DE ENVIOS (SUBMISSIONS) ---
+
+class SubmissionType(Base, ActiveModelMixin):
+    __tablename__ = 'submission_types'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
+
+    title = Column(String(100), nullable=False)
+    ref = Column(String(50), nullable=False)
+    allow_edit = Column(Boolean, default=True)
+
+    accepts_attachment = Column(Boolean, default=False)
+    multiple_attachments = Column(Boolean, default=False)
+    allowed_formats = Column(JSONB, default=list)  # ["image", "pdf"]
+    attachment_required = Column(Boolean, default=False)
+
+    fields = Column(JSONB, default=list)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    company = relationship("Company")
+
+    __table_args__ = (
+        UniqueConstraint('company_id', 'ref', name='unique_submission_type_ref_per_company'),
+        Index('idx_submission_type_lookup', 'company_id', 'ref'),
+    )
+
+
+class Submission(Base, ActiveModelMixin):
+    __tablename__ = 'submissions'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    company_id = Column(BigInteger, ForeignKey('companies.id'), nullable=False)
+    submission_type_id = Column(BigInteger, ForeignKey('submission_types.id'), nullable=True)
+
+    user_tax_id = Column(String(14), index=True, nullable=False)
+    user_name = Column(String(100), nullable=True)
+
+    type_title = Column(String(100), nullable=False)  # Título salvo caso o tipo seja deletado ou seja tipo padrão
+
+    status = Column(String(20), default='SENT')  # SENT, EDITED, CANCELLED
+
+    field_data = Column(JSONB, default=dict)
+    attachments = Column(JSONB, default=list)  # [{ "url": "...", "type": "image"|"pdf", "name": "..." }]
+
+    edited_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    company = relationship("Company")
+    submission_type = relationship("SubmissionType")
+
+    __table_args__ = (
+        Index('idx_submissions_company_tax_id', 'company_id', 'user_tax_id'),
+        Index('idx_submissions_user_tax_id', 'user_tax_id'),
     )

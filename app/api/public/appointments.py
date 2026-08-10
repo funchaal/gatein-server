@@ -3,7 +3,8 @@ from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
+from app.core.timezone import ensure_utc
 
 from app.core.database import get_db
 from app.core.dependencies import get_company_from_api_key
@@ -56,6 +57,11 @@ class AppointmentBaseSchema(BaseModel):
     start_tolerance: int = Field(0, description="Tolerância de início em minutos")
     end_tolerance: int = Field(0, description="Tolerância de término em minutos")
     custom_data: Optional[Dict[str, Any]] = None
+
+    @field_validator("window_start", "window_end", mode="after")
+    @classmethod
+    def normalize_timezone(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return ensure_utc(v)
 
 class CreateAppointmentPayload(BaseModel):
     """Schema for creating appointment along with driver details."""
@@ -328,8 +334,8 @@ def create_appointments(
                 )
                 notify_user_by_tax_id(
                     db, driver_tax_id,
-                    "📅 Novo agendamento",
-                    f"Você tem um agendamento em {terminal_name} {date_label}.",
+                    "Novo Agendamento",
+                    f"Um novo agendamento foi registrado em {terminal_name} para {date_label}.",
                     data={
                         "type": "SCHEDULED_CREATED",
                         "ref": item.appointment.ref,
@@ -399,6 +405,8 @@ def update_appointments(
         
         for key, value in item.appointment.items():
             if key not in protected_fields and hasattr(appt, key):
+                if key in ("window_start", "window_end") and value:
+                    value = ensure_utc(value)
                 setattr(appt, key, value)
         
         db.flush()
@@ -447,16 +455,16 @@ def update_appointments(
                     date_label = start.strftime("%d/%m às %H:%M") if start else "em breve"
                     notify_user_by_tax_id(
                         db, appt.user_tax_id,
-                        "⏰ Horário alterado",
-                        f"Seu agendamento em {terminal_name} foi reagendado para {date_label}.",
+                        "Horário Alterado",
+                        f"Seu agendamento em {terminal_name} foi atualizado para {date_label}.",
                         data={"type": "SCHEDULED_UPDATE", "ref": ref, "change": "time"},
                     )
                 else:
                     # Apenas dados de exibição alterados
                     notify_user_by_tax_id(
                         db, appt.user_tax_id,
-                        "🔄 Dados atualizados",
-                        f"Os detalhes do seu agendamento em {terminal_name} foram atualizados.",
+                        "Dados Atualizados",
+                        f"Os dados do seu agendamento em {terminal_name} foram atualizados.",
                         data={"type": "SCHEDULED_UPDATE", "ref": ref, "change": "display"},
                     )
         except Exception as push_err:
@@ -531,7 +539,7 @@ def delete_appointments(
             if appt.user_tax_id:
                 notify_user_by_tax_id(
                     db, appt.user_tax_id,
-                    "❌ Agendamento cancelado",
+                    "Agendamento Cancelado",
                     f"Seu agendamento em {terminal_name} foi cancelado.",
                     data={"type": "CANCELLED", "ref": appt.ref},
                 )

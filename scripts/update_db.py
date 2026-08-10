@@ -52,6 +52,18 @@ def migrate_and_update():
     with engine.begin() as conn:
         for query in alter_queries:
             conn.execute(text(query))
+            
+    enum_queries = [
+        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'notification_sent';",
+        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'auto_deactivated';"
+    ]
+    for eq in enum_queries:
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text(eq))
+        except Exception:
+            pass
+
     print("Migration successful!")
 
     # 2. Update existing trips

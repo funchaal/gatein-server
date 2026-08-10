@@ -100,11 +100,11 @@ def check_1day_reminders():
             if count == 1:
                 appt = appts[0]
                 hora = appt.window_start.strftime("%H:%M") if appt.window_start else "?"
-                title = "📌 Lembrete: amanhã"
-                body = f"Você tem um agendamento em {terminal_name} às {hora}"
+                title = "Lembrete de Agendamento"
+                body = f"Você possui um agendamento em {terminal_name} às {hora}."
             else:
-                title = "📌 Lembrete: amanhã"
-                body = f"Você tem {count} agendamentos amanhã"
+                title = "Lembrete de Agendamento"
+                body = f"Você possui {count} agendamentos amanhã."
 
             notify_user_by_tax_id(
                 db, tax_id, title, body,
@@ -194,14 +194,14 @@ def check_12h_reminders():
                 appt = appts[0]
                 terminal_name = appt.terminal.name if appt.terminal else "terminal"
                 hora = appt.window_start.strftime("%H:%M") if appt.window_start else "?"
-                title = "⏱ Em breve!"
-                body = f"Agendamento em {terminal_name} às {hora}"
+                title = "Agendamento Próximo"
+                body = f"Agendamento em {terminal_name} às {hora}."
                 target_ts = appt.window_start.isoformat() if appt.window_start else ""
                 appt_id = str(appt.id)
             else:
                 count = len(appts)
-                title = "⏱ Em breve!"
-                body = f"Você tem {count} agendamentos em ~12 horas"
+                title = "Agendamento Próximo"
+                body = f"Você possui {count} agendamentos em aproximadamente 12 horas."
                 target_ts = appts[0].window_start.isoformat() if appts[0].window_start else ""
                 appt_id = str(appts[0].id)
 
@@ -295,8 +295,8 @@ def check_window_open():
                 terminal_name = appt.terminal.name if appt.terminal else "terminal"
                 notify_user_by_tax_id(
                     db, appt.user_tax_id,
-                    "🟢 Janela aberta!",
-                    f"Você tem até {until} para fazer check-in em {terminal_name}",
+                    "Janela de Check-in Aberta",
+                    f"A janela para check-in em {terminal_name} está aberta até {until}.",
                     data={
                         "type": "WINDOW_OPEN",
                         "appointment_id": str(appt.id),
@@ -372,8 +372,8 @@ def check_in_progress():
             terminal_name = appt.terminal.name if appt.terminal else "terminal"
             notify_user_by_tax_id(
                 db, appt.user_tax_id,
-                "🏭 Em andamento",
-                f"Siga as instruções do terminal {terminal_name}",
+                "Operação em Andamento",
+                f"Siga as instruções do terminal {terminal_name}.",
                 data={
                     "type": "ON_GOING",
                     "appointment_id": str(appt.id),
@@ -553,6 +553,405 @@ def cleanup_expired_announcements():
 
 
 # ---------------------------------------------------------------------------
+# Jobs de Viagens (Trips)
+# ---------------------------------------------------------------------------
+
+def check_trip_1day_reminders():
+    """
+    Dispara notificações para viagens que começam amanhã.
+    Garante envio único por viagem via trips_logs.
+    Roda a cada hora.
+    """
+    from app.models import Trip, TripLog, TripEvent, Driver
+    from app.core.firebase import notify_user_by_tax_id
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        window_start = now + timedelta(hours=23)
+        window_end = now + timedelta(hours=25)
+
+        trips = (
+            db.query(Trip)
+            .join(Driver, Trip.driver_id == Driver.id)
+            .filter(
+                Trip.is_active == True,
+                Trip.status.in_(["PLANNED", "ACTIVE"]),
+                Trip.window_start >= window_start,
+                Trip.window_start <= window_end,
+                Driver.tax_id != None,
+            )
+            .all()
+        )
+
+        if not trips:
+            return
+
+        trip_ids = [t.id for t in trips]
+        sent_logs = (
+            db.query(TripLog.trip_id, TripLog.json)
+            .filter(
+                TripLog.trip_id.in_(trip_ids),
+                TripLog.event == TripEvent.NOTIFICATION_SENT,
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.trip_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "TRIP_REMINDER_1DAY"
+        }
+
+        unsent_trips = [t for t in trips if t.id not in already_sent_ids]
+        if not unsent_trips:
+            return
+
+        sent_count = 0
+        for trip in unsent_trips:
+            tax_id = trip.driver.tax_id
+            from_loc = trip.from_location or trip.origin_city or "Origem"
+            to_loc = trip.to_location or trip.destiny_city or "Destino"
+            title = "Lembrete: Viagem amanhã!"
+            body = f"Sua viagem de {from_loc} para {to_loc} está agendada para amanhã."
+
+            notify_user_by_tax_id(
+                db, tax_id, title, body,
+                data={
+                    "type": "TRIP_REMINDER_1DAY",
+                    "trip_id": str(trip.id),
+                    "ref": trip.ref or "",
+                }
+            )
+
+            db.add(TripLog(
+                company_id=trip.trucking_company_id,
+                trip_id=trip.id,
+                event=TripEvent.NOTIFICATION_SENT,
+                message=f"Lembrete de viagem 1 dia enviado: {title}",
+                json={"push_type": "TRIP_REMINDER_1DAY"},
+            ))
+            sent_count += 1
+
+        db.commit()
+        if sent_count > 0:
+            logger.info(f"[scheduler] check_trip_1day_reminders: {sent_count} viagem(ns) notificada(s).")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em check_trip_1day_reminders: {e}")
+    finally:
+        db.close()
+
+
+def check_trip_12h_reminders():
+    """
+    Dispara notificações para viagens que começam em ~12h com payload para countdown local.
+    Roda a cada 15 minutos.
+    """
+    from app.models import Trip, TripLog, TripEvent, Driver
+    from app.core.firebase import notify_user_by_tax_id
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        window_start = now + timedelta(hours=11, minutes=52, seconds=30)
+        window_end = now + timedelta(hours=12, minutes=7, seconds=30)
+
+        trips = (
+            db.query(Trip)
+            .join(Driver, Trip.driver_id == Driver.id)
+            .filter(
+                Trip.is_active == True,
+                Trip.status.in_(["PLANNED", "ACTIVE"]),
+                Trip.window_start >= window_start,
+                Trip.window_start <= window_end,
+                Driver.tax_id != None,
+            )
+            .all()
+        )
+
+        if not trips:
+            return
+
+        trip_ids = [t.id for t in trips]
+        sent_logs = (
+            db.query(TripLog.trip_id, TripLog.json)
+            .filter(
+                TripLog.trip_id.in_(trip_ids),
+                TripLog.event == TripEvent.NOTIFICATION_SENT,
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.trip_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "TRIP_COUNTDOWN"
+        }
+
+        unsent_trips = [t for t in trips if t.id not in already_sent_ids]
+        if not unsent_trips:
+            return
+
+        sent_count = 0
+        for trip in unsent_trips:
+            tax_id = trip.driver.tax_id
+            to_loc = trip.to_location or trip.destiny_city or "Destino"
+            title = "Viagem em breve!"
+            body = f"Sua viagem para {to_loc} começará em 12 horas."
+            target_ts = trip.window_start.isoformat() if trip.window_start else ""
+
+            notify_user_by_tax_id(
+                db, tax_id, title, body,
+                data={
+                    "type": "TRIP_COUNTDOWN",
+                    "trip_id": str(trip.id),
+                    "ref": trip.ref or "",
+                    "target_timestamp": target_ts,
+                }
+            )
+
+            db.add(TripLog(
+                company_id=trip.trucking_company_id,
+                trip_id=trip.id,
+                event=TripEvent.NOTIFICATION_SENT,
+                message=f"Lembrete de viagem 12h enviado: {title}",
+                json={"push_type": "TRIP_COUNTDOWN"},
+            ))
+            sent_count += 1
+
+        db.commit()
+        if sent_count > 0:
+            logger.info(f"[scheduler] check_trip_12h_reminders: {sent_count} viagem(ns) notificada(s).")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em check_trip_12h_reminders: {e}")
+    finally:
+        db.close()
+
+
+def check_trip_window_open():
+    """
+    Notifica motoristas quando a janela da viagem é iniciada.
+    Roda a cada 5 minutos.
+    """
+    from app.models import Trip, TripLog, TripEvent, Driver
+    from app.core.firebase import notify_user_by_tax_id
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+
+        trips = (
+            db.query(Trip)
+            .join(Driver, Trip.driver_id == Driver.id)
+            .filter(
+                Trip.is_active == True,
+                Trip.status.in_(["PLANNED", "ACTIVE"]),
+                Driver.tax_id != None,
+            )
+            .all()
+        )
+
+        if not trips:
+            return
+
+        trip_ids = [t.id for t in trips]
+        sent_logs = (
+            db.query(TripLog.trip_id, TripLog.json)
+            .filter(
+                TripLog.trip_id.in_(trip_ids),
+                TripLog.event == TripEvent.NOTIFICATION_SENT,
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.trip_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "TRIP_WINDOW_OPEN"
+        }
+
+        sent_count = 0
+        for trip in trips:
+            if trip.id in already_sent_ids:
+                continue
+
+            if not trip.window_start or not trip.window_end:
+                continue
+
+            window_open = trip.window_start - timedelta(minutes=trip.start_tolerance or 0)
+            window_close = trip.window_end + timedelta(minutes=trip.end_tolerance or 0)
+
+            if window_open <= now <= window_close:
+                from_loc = trip.from_location or trip.origin_city or "Origem"
+                to_loc = trip.to_location or trip.destiny_city or "Destino"
+                notify_user_by_tax_id(
+                    db, trip.driver.tax_id,
+                    "Janela da viagem aberta!",
+                    f"A janela para iniciar a viagem de {from_loc} para {to_loc} está liberada.",
+                    data={
+                        "type": "TRIP_WINDOW_OPEN",
+                        "trip_id": str(trip.id),
+                        "ref": trip.ref or "",
+                        "window_close": window_close.isoformat(),
+                    }
+                )
+
+                db.add(TripLog(
+                    company_id=trip.trucking_company_id,
+                    trip_id=trip.id,
+                    event=TripEvent.NOTIFICATION_SENT,
+                    message="Notificação TRIP_WINDOW_OPEN enviada",
+                    json={"push_type": "TRIP_WINDOW_OPEN"},
+                ))
+                sent_count += 1
+
+        db.commit()
+        if sent_count > 0:
+            logger.info(f"[scheduler] check_trip_window_open: {sent_count} notificação(ões) enviada(s).")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em check_trip_window_open: {e}")
+    finally:
+        db.close()
+
+
+def check_trip_in_progress():
+    """
+    Para viagens no status IN_PROGRESS, envia notificação de acompanhamento de rota.
+    Roda a cada 5 minutos.
+    """
+    from app.models import Trip, TripLog, TripEvent, Driver
+    from app.core.firebase import notify_user_by_tax_id
+
+    db = SessionLocal()
+    try:
+        trips = (
+            db.query(Trip)
+            .join(Driver, Trip.driver_id == Driver.id)
+            .filter(
+                Trip.is_active == True,
+                Trip.status == "IN_PROGRESS",
+                Driver.tax_id != None,
+            )
+            .all()
+        )
+
+        if not trips:
+            return
+
+        trip_ids = [t.id for t in trips]
+        sent_logs = (
+            db.query(TripLog.trip_id, TripLog.json)
+            .filter(
+                TripLog.trip_id.in_(trip_ids),
+                TripLog.event == TripEvent.NOTIFICATION_SENT,
+            )
+            .all()
+        )
+        already_sent_ids = {
+            log.trip_id
+            for log in sent_logs
+            if log.json and log.json.get("push_type") == "TRIP_IN_PROGRESS"
+        }
+
+        sent_count = 0
+        for trip in trips:
+            if trip.id in already_sent_ids:
+                continue
+
+            to_loc = trip.to_location or trip.destiny_city or "Destino"
+            notify_user_by_tax_id(
+                db, trip.driver.tax_id,
+                "Viagem em andamento",
+                f"Boa viagem! Sua rota para {to_loc} está em andamento.",
+                data={
+                    "type": "TRIP_IN_PROGRESS",
+                    "trip_id": str(trip.id),
+                    "ref": trip.ref or "",
+                }
+            )
+
+            db.add(TripLog(
+                company_id=trip.trucking_company_id,
+                trip_id=trip.id,
+                event=TripEvent.NOTIFICATION_SENT,
+                message="Notificação TRIP_IN_PROGRESS enviada",
+                json={"push_type": "TRIP_IN_PROGRESS"},
+            ))
+            sent_count += 1
+
+        db.commit()
+        if sent_count > 0:
+            logger.info(f"[scheduler] check_trip_in_progress: {sent_count} notificação(ões) enviada(s).")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em check_trip_in_progress: {e}")
+    finally:
+        db.close()
+
+
+def deactivate_abandoned_trips():
+    """
+    Desativa viagens por inatividade ou estouro de tolerância (> 2 horas após fim da janela).
+    Roda a cada 5 minutos.
+    """
+    from app.models import Trip, TripLog, TripEvent, Driver
+    from app.core.firebase import notify_user_by_tax_id
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+
+        candidates = (
+            db.query(Trip)
+            .filter(
+                Trip.is_active == True,
+                Trip.status.in_(["PLANNED", "ACTIVE", "IN_PROGRESS"]),
+            )
+            .all()
+        )
+
+        to_deactivate = []
+        for trip in candidates:
+            if trip.window_end:
+                end_window = trip.window_end + timedelta(minutes=trip.end_tolerance or 0)
+                if now > (end_window + timedelta(hours=2)):
+                    to_deactivate.append(trip)
+
+        for trip in to_deactivate:
+            trip.status = "DEACTIVATED"
+            trip.is_active = False
+            trip.updated_at = now
+
+            db.add(TripLog(
+                company_id=trip.trucking_company_id,
+                trip_id=trip.id,
+                event=TripEvent.AUTO_DEACTIVATED,
+                message="Viagem desativada por tolerância de tempo expirada",
+            ))
+
+            if trip.driver and trip.driver.tax_id:
+                try:
+                    from_loc = trip.from_location or trip.origin_city or "Origem"
+                    to_loc = trip.to_location or trip.destiny_city or "Destino"
+                    notify_user_by_tax_id(
+                        db, trip.driver.tax_id,
+                        "Viagem Cancelada",
+                        f"A viagem ({from_loc} → {to_loc}) foi desativada por exceder o tempo limite.",
+                        data={
+                            "type": "TRIP_CANCELLED",
+                            "trip_id": str(trip.id),
+                            "ref": trip.ref or "",
+                        }
+                    )
+                except Exception:
+                    pass
+
+        db.commit()
+        if to_deactivate:
+            logger.info(f"[scheduler] deactivate_abandoned_trips: {len(to_deactivate)} viagem(ns) desativada(s).")
+    except Exception as e:
+        logger.error(f"[scheduler] Erro em deactivate_abandoned_trips: {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Registro dos jobs
 # ---------------------------------------------------------------------------
 
@@ -625,8 +1024,49 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Jobs de Viagens (Trips)
+    scheduler.add_job(
+        check_trip_1day_reminders,
+        "cron",
+        minute=0,
+        id="job_trip_1day_reminders",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        check_trip_12h_reminders,
+        "interval",
+        minutes=15,
+        id="job_trip_12h_reminders",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        check_trip_window_open,
+        "interval",
+        minutes=5,
+        id="job_trip_window_open",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        check_trip_in_progress,
+        "interval",
+        minutes=5,
+        id="job_trip_in_progress",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        deactivate_abandoned_trips,
+        "interval",
+        minutes=5,
+        id="job_deactivate_abandoned_trips",
+        replace_existing=True,
+    )
+
     scheduler.start()
-    logger.info("APScheduler iniciado com 7 jobs configurados.")
+    logger.info("APScheduler iniciado com 12 jobs configurados.")
 
 
 def stop_scheduler():

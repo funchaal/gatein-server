@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # ─── Ambiente ────────────────────────────────────────────────────────────
-    # Opções válidas: "development", "homologation", "production"
-    ENVIRONMENT: Literal["development", "homologation", "production"] = "development"
+    # Opções válidas: "development", "development-staging", "homologation", "production"
+    ENVIRONMENT: Literal["development", "development-staging", "homologation", "production"] = "development"
 
     @property
     def is_production(self) -> bool:
@@ -46,7 +46,11 @@ class Settings(BaseSettings):
 
     @property
     def is_development(self) -> bool:
-        return self.ENVIRONMENT.lower() == "development"
+        return self.ENVIRONMENT.lower() in ("development", "development-staging")
+
+    @property
+    def should_use_staging_logic(self) -> bool:
+        return self.ENVIRONMENT.lower() in ("development-staging", "homologation")
 
     # Mantido para retrocompatibilidade onde IS_PROD era checado
     @property

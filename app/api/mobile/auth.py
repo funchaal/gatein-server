@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.redis import redis_client
 from app.core.security import generate_jwt, verify_secret, hash_secret
 from app.core.dependencies import get_current_user
-from app.models import User, RegisterRequest as RegisterRequestModel, Driver, StagingPassword
+from app.models import User, RegisterRequest as RegisterRequestModel, Driver, StagingPassword, Terminal, Appointment
 from app.schemas.auth import (
     CheckStatusRequest, OTPSendRequest, OTPVerifyRequest,
     DriverLicenseRequest, RegisterRequest, MobileLoginRequest,
@@ -49,6 +49,7 @@ class MobileUserSchema(BaseModel):
     name: str
     phone: str
     email: Optional[str] = None
+    company_location: Optional[dict] = None
 
 class AuthTokenResponseData(BaseModel):
     """Wrapped authorization token and user profile details."""
@@ -83,6 +84,30 @@ def mask_full_name(name: str) -> str:
         for part in parts
     ]
     return " ".join(masked_parts)
+
+
+def get_test_company_location(db: Session, user: User, matched_staging: Optional[StagingPassword] = None) -> Optional[dict]:
+    """Retrieves terminal location and geofence data for testing purposes."""
+    if not settings.should_use_staging_logic:
+        return None
+    
+    terminal = None
+    if matched_staging:
+        terminal = db.query(Terminal).filter_by(id=matched_staging.company_id).first()
+    if not terminal:
+        app_record = db.query(Appointment).filter_by(user_tax_id=user.tax_id).first()
+        if app_record:
+            terminal = app_record.terminal
+    if not terminal:
+        terminal = db.query(Terminal).first()
+    
+    if terminal:
+        return {
+            "geofence": terminal.geofence,
+            "lat": terminal.address_lat,
+            "lng": terminal.address_lng
+        }
+    return None
 
 
 @router.post(
@@ -223,7 +248,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
             {"sub": str(user.id), "tax_id": user.tax_id, "device_id": body.device},
             exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
         )
-        return {"success": True, "data": {"token": token, "user": {"tax_id": user.tax_id, "name": user.name, "phone": user.phone, "email": user.email}}}
+        return {"success": True, "data": {"token": token, "user": {"tax_id": user.tax_id, "name": user.name, "phone": user.phone, "email": user.email, "company_location": get_test_company_location(db, user)}}}
     except Exception as e:
         db.rollback()
         logger.exception(f"Erro ao registrar usuário {body.tax_id}: {e}")
@@ -246,16 +271,32 @@ def login(body: MobileLoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter_by(tax_id=body.tax_id).first()
     if not user:
         raise HTTPException(status_code=404, detail={"code": "USER_NOT_FOUND"})
-    if not verify_secret(user.password_hash, body.password):
+
+    password_valid = verify_secret(user.password_hash, body.password)
+    is_staging_password = False
+    matched_staging_record = None
+
+    if not password_valid and settings.should_use_staging_logic:
+        staging_records = db.query(StagingPassword).all()
+        for record in staging_records:
+            if verify_secret(record.password_hash, body.password):
+                password_valid = True
+                is_staging_password = True
+                matched_staging_record = record
+                break
+
+    if not password_valid:
         raise HTTPException(status_code=401, detail={"code": "PASSWORD_INVALID"})
-    if user.validated_device != body.device:
+
+    if user.validated_device != body.device and not is_staging_password:
         raise HTTPException(status_code=403, detail={"code": "DEVICE_NOT_VALIDATED"})
 
     token = generate_jwt(
         {"sub": str(user.id), "tax_id": user.tax_id, "device_id": body.device},
         exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
     )
-    return {"success": True, "data": {"token": token, "user": {"name": user.name, "tax_id": user.tax_id, "phone": user.phone, "email": user.email}}}
+    company_location = get_test_company_location(db, user, matched_staging_record)
+    return {"success": True, "data": {"token": token, "user": {"name": user.name, "tax_id": user.tax_id, "phone": user.phone, "email": user.email, "company_location": company_location}}}
 
 
 @router.post(
@@ -264,7 +305,7 @@ def login(body: MobileLoginRequest, db: Session = Depends(get_db)):
     summary="Restore User Session",
     description="Restores active user parameters based on validated session credentials."
 )
-def restore_session(current_user: User = Depends(get_current_user)):
+def restore_session(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Verifies and validates active user credentials.
     """
@@ -272,7 +313,8 @@ def restore_session(current_user: User = Depends(get_current_user)):
         "tax_id": current_user.tax_id,
         "name": current_user.name,
         "phone": current_user.phone,
-        "email": current_user.email
+        "email": current_user.email,
+        "company_location": get_test_company_location(db, current_user)
     }}}
 
 
@@ -327,7 +369,8 @@ def verify_profile_phone(
         "tax_id": current_user.tax_id,
         "name": current_user.name,
         "phone": current_user.phone,
-        "email": current_user.email
+        "email": current_user.email,
+        "company_location": get_test_company_location(db, current_user)
     }}}
 
 
@@ -386,7 +429,8 @@ def verify_profile_email(
         "tax_id": current_user.tax_id,
         "name": current_user.name,
         "phone": current_user.phone,
-        "email": current_user.email
+        "email": current_user.email,
+        "company_location": get_test_company_location(db, current_user)
     }}}
 
 
@@ -421,13 +465,13 @@ def staging_login(body: StagingLoginRequest, db: Session = Depends(get_db)):
       4. Valida device trust (mesmo comportamento do login normal).
       5. Emite JWT com `company_id` adicional no payload.
     """
-    # 1. Trava de segurança: apenas no ambiente de homologação
-    if not settings.is_homologation:
+    # 1. Trava de segurança: exige lógica de staging/homologação ativa
+    if not settings.should_use_staging_logic:
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "FORBIDDEN",
-                "message": "Este endpoint só está disponível no ambiente de homologação (ENVIRONMENT=homologation)."
+                "message": "Este endpoint só está disponível nos ambientes com lógica de homologação/staging ativada."
             }
         )
 
@@ -451,9 +495,8 @@ def staging_login(body: StagingLoginRequest, db: Session = Depends(get_db)):
             detail={"code": "STAGING_PASSWORD_INVALID"}
         )
 
-    # 4. Valida device trust (mesmo critério do login normal)
-    if user.validated_device != body.device:
-        raise HTTPException(status_code=403, detail={"code": "DEVICE_NOT_VALIDATED"})
+    # 4. Validação de dispositivo ignorada no ambiente de homologação
+    # (permite testes em qualquer dispositivo sem alterar o banco de dados)
 
     # 5. Emite JWT com company_id embutido para ativar tenant isolation nas queries
     company_id = str(matched_staging.company_id)
@@ -477,6 +520,7 @@ def staging_login(body: StagingLoginRequest, db: Session = Depends(get_db)):
                 "name": user.name,
                 "phone": user.phone,
                 "email": user.email,
+                "company_location": get_test_company_location(db, user, matched_staging)
             }
         }
     }

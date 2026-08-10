@@ -68,8 +68,8 @@ async def run_async_checkin(terminal_id: UUID, target_sid: str, tax_id: str):
                 notify_user_by_tax_id(
                     db,
                     tax_id,
-                    "❌ Tempo limite excedido",
-                    "O terminal demorou para responder ao check-in. Tente novamente.",
+                    "Tempo Limite Excedido",
+                    "O terminal demorou para responder ao check-in. Por favor, tente novamente.",
                     data={"type": "CHECKIN_FAILED"},
                 )
             except Exception as e:
@@ -82,8 +82,8 @@ async def run_async_checkin(terminal_id: UUID, target_sid: str, tax_id: str):
                 notify_user_by_tax_id(
                     db,
                     tax_id,
-                    "❌ Falha no check-in",
-                    f"Erro de comunicação com o terminal: {str(e)}",
+                    "Falha no Check-in",
+                    f"Erro de comunicação com o terminal: {str(e)}.",
                     data={"type": "CHECKIN_FAILED"},
                 )
             except Exception as e_push:
@@ -181,8 +181,8 @@ async def run_async_checkin(terminal_id: UUID, target_sid: str, tax_id: str):
                 notify_user_by_tax_id(
                     db,
                     tax_id,
-                    "✅ Check-in realizado!",
-                    f"Seu acesso foi liberado em {terminal_display}.",
+                    "Check-in Realizado",
+                    f"Seu acesso foi liberado no terminal {terminal_display}.",
                     data={"type": "CHECKED-IN"},
                 )
             except Exception as e:
@@ -298,8 +298,8 @@ def cancel_checkin(
         notify_user_by_tax_id(
             db,
             current_user.tax_id,
-            "⚠️ Check-in cancelado",
-            f"Motivo: {body.reason}. Seu agendamento em {terminal_name} voltou para Agendado.",
+            "Check-in Cancelado",
+            f"Seu check-in no terminal {terminal_name} foi cancelado. Motivo: {body.reason}.",
             data={
                 "type": "CHECKIN_CANCELLED",
                 "appointment_id": encode_id(appointment.id),

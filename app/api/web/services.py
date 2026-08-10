@@ -114,11 +114,18 @@ def create_service(
     domain = extract_domain(body.url)
     allowed_domain = db.query(AllowedDomain).filter_by(domain=domain).first()
 
+    # ETAPA IGNORADA TEMPORARIAMENTE (CÓDIGO ORIGINAL MANTIDO COMENTADO):
+    # if not allowed_domain:
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail={"code": "DOMAIN_NOT_ALLOWED", "message": "O domínio não está cadastrado. Entre em contato com o suporte."}
+    #     )
+
+    # Se o domínio não estiver cadastrado, cria automaticamente para satisfazer a FK domain_id
     if not allowed_domain:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "DOMAIN_NOT_ALLOWED", "message": "O domínio não está cadastrado. Entre em contato com o suporte."}
-        )
+        allowed_domain = AllowedDomain(domain=domain, is_active=True)
+        db.add(allowed_domain)
+        db.flush()
 
     message = None
     if not allowed_domain.is_active:
@@ -186,11 +193,18 @@ def update_service(
         domain = extract_domain(body.url)
         allowed_domain = db.query(AllowedDomain).filter_by(domain=domain).first()
 
+        # ETAPA IGNORADA TEMPORARIAMENTE (CÓDIGO ORIGINAL MANTIDO COMENTADO):
+        # if not allowed_domain:
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail={"code": "DOMAIN_NOT_ALLOWED", "message": "O domínio não está cadastrado. Entre em contato com o suporte."}
+        #     )
+
+        # Se o domínio não estiver cadastrado, cria automaticamente para satisfazer a FK domain_id
         if not allowed_domain:
-            raise HTTPException(
-                status_code=400,
-                detail={"code": "DOMAIN_NOT_ALLOWED", "message": "O domínio não está cadastrado. Entre em contato com o suporte."}
-            )
+            allowed_domain = AllowedDomain(domain=domain, is_active=True)
+            db.add(allowed_domain)
+            db.flush()
 
         if not allowed_domain.is_active:
             message = "Serviço atualizado, mas como o domínio está desativado, o serviço não será usável no aplicativo."

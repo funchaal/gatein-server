@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import secrets as secrets_module
+import re
 
 from app.core.database import get_db
 from app.core.security import verify_secret, generate_jwt, hash_secret
 from app.core.dependencies import get_current_company_user, get_current_admin_company_user
 from app.core.sqids import encode_id
-from app.models import CompanyUser, StagingPassword
+from app.models import CompanyUser, StagingPassword, User, Driver
 from app.schemas.auth import WebLoginRequest, WebDevResetPasswordRequest
 from config import settings
 
@@ -262,4 +263,118 @@ def get_staging_password_status(
             "generated_at": existing.created_at.isoformat() if existing else None,
             "updated_at": existing.updated_at.isoformat() if existing else None,
         }
-    }
+    }
+
+
+# ─── STAGING FAKE DRIVER CREATION ─────────────────────────────────────────────
+
+class CreateFakeDriverRequest(BaseModel):
+    tax_id: str
+    name: str
+    phone: Optional[str] = None
+    driver_license: Optional[str] = None
+    driver_license_category: Optional[str] = "E"
+
+
+class CreateFakeDriverResponseData(BaseModel):
+    id: str
+    tax_id: str
+    name: str
+    phone: Optional[str] = None
+    driver_id: str
+    driver_license_number: Optional[str] = None
+
+
+class CreateFakeDriverResponse(BaseModel):
+    success: bool = True
+    data: CreateFakeDriverResponseData
+
+
+@router.post(
+    "/staging/create-driver",
+    response_model=CreateFakeDriverResponse,
+    summary="Criar Motorista Fake de Homologação",
+    description=(
+        "Cria um motorista fictício para testes em ambiente de homologação. "
+        "Pula verificações de celular (OTP) e CNH, exigindo apenas um CPF de 11 dígitos. "
+        "Cria registros vinculados nas tabelas users e drivers, utilizando a senha mestra da empresa."
+    )
+)
+def create_fake_driver(
+    body: CreateFakeDriverRequest,
+    db: Session = Depends(get_db),
+    current_user: CompanyUser = Depends(get_current_admin_company_user)
+):
+    """
+    Criação de motorista fake para testes em homologação.
+    1. Bloqueia em ambiente de produção (exige settings.is_homologation).
+    2. Exige CPF com 11 dígitos (apenas validação de extensão de dígitos).
+    3. Verifica se CPF já existe em User ou Driver.
+    4. Atribui a senha mestra de staging da empresa como password_hash.
+    5. Cria registros síncronos em Driver e User.
+    """
+    if not settings.should_use_staging_logic:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "FORBIDDEN",
+                "message": "Esta funcionalidade só está disponível nos ambientes com lógica de homologação/staging ativada."
+            }
+        )
+
+    cleaned_cpf = re.sub(r'\D', '', body.tax_id or '')
+    if len(cleaned_cpf) != 11:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_CPF",
+                "message": "O CPF deve conter exatamente 11 dígitos numéricos."
+            }
+        )
+
+    existing_user = db.query(User).filter_by(tax_id=cleaned_cpf).first()
+    existing_driver = db.query(Driver).filter_by(tax_id=cleaned_cpf).first()
+    if existing_user or existing_driver:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TAX_ID_EXISTS",
+                "message": "Já existe um usuário ou motorista cadastrado com este CPF."
+            }
+        )
+
+    phone_val = body.phone.strip() if body.phone and body.phone.strip() else "11999999999"
+    cnh_val = body.driver_license.strip() if body.driver_license and body.driver_license.strip() else "00000000000"
+    category_val = body.driver_license_category.strip() if body.driver_license_category and body.driver_license_category.strip() else "E"
+
+    driver = Driver(
+        tax_id=cleaned_cpf,
+        driver_license_number=cnh_val,
+        driver_license_category=category_val,
+        validated_by=current_user.company_id
+    )
+    db.add(driver)
+    db.flush()
+
+    user = User(
+        tax_id=cleaned_cpf,
+        name=body.name.strip(),
+        phone=phone_val,
+        password_hash=None,
+        driver_id=driver.id
+    )
+    db.add(user)
+    db.commit()
+
+    return {
+        "success": True,
+        "data": {
+            "id": encode_id(user.id),
+            "tax_id": user.tax_id,
+            "name": user.name,
+            "phone": user.phone,
+            "driver_id": encode_id(driver.id),
+            "driver_license_number": driver.driver_license_number
+        }
+    }
+

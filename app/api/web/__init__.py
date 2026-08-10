@@ -11,6 +11,8 @@ from app.api.web.trips_layout import router as trips_layout_router
 from app.api.web.apiKey import router as api_keys_router
 from app.api.web.announcements import router as web_announcements_router
 from app.api.web.uploads import router as web_uploads_router
+from app.api.web.submission_types import router as submission_types_router
+from app.api.web.submissions import router as web_submissions_router
 
 router = APIRouter(prefix="/api/web")
 
@@ -25,3 +27,5 @@ router.include_router(trips_layout_router, prefix="/config", tags=["Web Trip Lay
 router.include_router(api_keys_router, prefix="/api-key", tags=["API Keys"])
 router.include_router(web_announcements_router, tags=["Web Announcements"])
 router.include_router(web_uploads_router, tags=["Web Uploads"])
+router.include_router(submission_types_router, prefix="/config", tags=["Web Submission Types"])
+router.include_router(web_submissions_router, tags=["Web Submissions"])

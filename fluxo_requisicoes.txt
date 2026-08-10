@@ -1,0 +1,419 @@
+================================================================================
+          FLUXO DE REQUISIÇÕES GATEIN API (EXCLUSIVAMENTE ADMIN E PUBLIC)
+================================================================================
+
+Este documento descreve a sequência completa de requisições HTTP e comandos cURL
+necessários para:
+1. Criar uma empresa no sistema (via Admin API com Super Admin Secret = 1234).
+2. Validar a API Key gerada (via Public API).
+3. Cadastrar um motorista novo e criar seu agendamento inicial (via Public API).
+4. Alterar os dados do agendamento (via Public API).
+5. Gerenciar status, integrações de segurança, logs e cancelamento.
+
+* NOTA: Nenhuma rota privada de Web (`/api/web/...`) ou Mobile (`/api/mobile/...`)
+  foi incluída, atendendo estritamente ao filtro de rotas PUBLIC e ADMIN.
+
+
+--------------------------------------------------------------------------------
+SUMÁRIO DOS ENDPOINTS
+--------------------------------------------------------------------------------
+[ADMIN]  POST   /api/admin/companies                  -> Bootstrap/Criar Empresa
+[ADMIN]  GET    /api/admin/appointments/logs          -> Consultar Logs (Super Admin)
+[ADMIN]  GET    /api/admin/trips/logs                 -> Consultar Logs Viagens (Super Admin)
+[PUBLIC] GET    /api/v1/validate-api-key              -> Validar Credencial API Key
+[PUBLIC] POST   /api/v1/appointments                  -> Criar Agendamento + Motorista Novo
+[PUBLIC] PUT    /api/v1/appointments                  -> Alterar Agendamento Existente
+[PUBLIC] GET    /api/v1/appointments/logs             -> Consultar Agendamento e Logs
+[PUBLIC] POST   /api/v1/appointments/ping             -> Ping de Atividade do Agendamento
+[PUBLIC] POST   /api/v1/drivers/safety-integration    -> Atualizar Integração do Motorista
+[PUBLIC] DELETE /api/v1/appointments                  -> Cancelar / Excluir Agendamento
+[PUBLIC] POST   /api/v1/tickets                       -> Criar Ticket Digital do Agendamento
+[PUBLIC] PUT    /api/v1/tickets                       -> Alterar Ticket Digital
+[PUBLIC] GET    /api/v1/tickets                       -> Consultar Tickets por Agendamento
+[PUBLIC] DELETE /api/v1/tickets                       -> Deletar Ticket Digital
+[PUBLIC] POST   /api/v1/trips                         -> Criar Viagem + Motorista Novo (Transportadoras)
+[PUBLIC] PUT    /api/v1/trips                         -> Alterar Viagem (Transportadoras)
+[PUBLIC] GET    /api/v1/trips/logs                    -> Consultar Viagem e Logs (Transportadoras)
+[PUBLIC] DELETE /api/v1/trips                         -> Cancelar Viagem (Transportadoras)
+
+
+================================================================================
+ETAPA 1: CRIAR EMPRESA (BOOTSTRAP COMPANY)
+================================================================================
+Método: POST
+URL: http://localhost:5000/api/admin/companies
+Headers:
+  Content-Type: application/json
+  X-Super-Admin-Token: 1234
+
+Descrição:
+Registra uma nova empresa (tipo "terminal" ou "trucking_company"), hash da senha do
+administrador web e provisiona a API Key inicial (sk_live_...).
+
+Comando cURL:
+curl -X POST "http://localhost:5000/api/admin/companies" \
+  -H "Content-Type: application/json" \
+  -H "X-Super-Admin-Token: 1234" \
+  -d '{
+    "type": "terminal",
+    "company_username": "porto_sul",
+    "name": "Porto Sul Terminais S.A.",
+    "tax_id": "12345678000199",
+    "phone": "47999999999",
+    "email": "contato@portosul.com.br",
+    "admin_user": {
+      "name": "Administrador Porto",
+      "username": "admin.porto",
+      "password": "SenhaSegura123!"
+    }
+  }'
+
+Resposta Sucesso (201 Created):
+{
+  "success": true,
+  "data": {
+    "company_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "type": "terminal",
+    "name": "Porto Sul Terminais S.A.",
+    "admin_username": "admin.porto",
+    "initial_api_key": "sk_live_porto_sul_abc123xyz...",
+    "message": "Empresa e administrador criados com sucesso."
+  }
+}
+
+
+================================================================================
+ETAPA 2: VALIDAR API KEY DA EMPRESA
+================================================================================
+Método: GET
+URL: http://localhost:5000/api/v1/validate-api-key
+Headers:
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Valida se a chave de API fornecida pertence a uma empresa ativa no GateIn.
+
+Comando cURL:
+curl -X GET "http://localhost:5000/api/v1/validate-api-key" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..."
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "data": {
+    "type": "terminal",
+    "username": "porto_sul",
+    "name": "Porto Sul Terminais S.A.",
+    "tax_id": "12345678000199"
+  }
+}
+
+
+================================================================================
+ETAPA 3: CADASTRAR MOTORISTA NOVO E LANÇAR AGENDAMENTO
+================================================================================
+Método: POST
+URL: http://localhost:5000/api/v1/appointments
+Headers:
+  Content-Type: application/json
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+No GateIn, o cadastro de um motorista novo é realizado no mesmo momento do lançamento
+do agendamento. Se o CPF (`driver.tax_id`) não existir no banco de dados, o backend
+cria automaticamente o registro do motorista com o número e categoria da CNH fornecidos.
+
+Comando cURL:
+curl -X POST "http://localhost:5000/api/v1/appointments" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "driver": {
+      "tax_id": "12345678901",
+      "driver_license_number": "12345678900",
+      "license_category": "E",
+      "safety_integration": true,
+      "integration_expires_at": "2026-12-31T23:59:59Z",
+      "integration_watched_at": "2026-08-01T10:00:00Z"
+    },
+    "appointment": {
+      "ref": "AGEND-2026-001",
+      "layout_ref": "LAYOUT-PADRAO",
+      "summary": "Agendamento Inicial - Carga de Grãos Gate 01",
+      "license_plate": "ABC1D23",
+      "window_start": "2026-08-05T08:00:00Z",
+      "window_end": "2026-08-05T10:00:00Z",
+      "start_tolerance": 15,
+      "end_tolerance": 15,
+      "custom_data": {
+        "container_number": "MSCU9876543",
+        "booking": "BK-554433"
+      }
+    }
+  }'
+
+Resposta Sucesso (201 Created):
+{
+  "success": true,
+  "data": {
+    "created_refs": [
+      "AGEND-2026-001"
+    ],
+    "status": "created"
+  }
+}
+
+
+================================================================================
+ETAPA 4: ALTERAR AGENDAMENTO
+================================================================================
+Método: PUT
+URL: http://localhost:5000/api/v1/appointments
+Headers:
+  Content-Type: application/json
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Atualiza parcialmente um agendamento existente filtrado por sua referência única (`ref`).
+Permite alterar janela de horário, placa, resumo, dados customizados, etc.
+
+Comando cURL:
+curl -X PUT "http://localhost:5000/api/v1/appointments" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "ref": "AGEND-2026-001",
+    "appointment": {
+      "summary": "Agendamento Atualizado - Carga de Grãos Gate 02",
+      "license_plate": "XYZ9E87",
+      "window_start": "2026-08-05T09:00:00Z",
+      "window_end": "2026-08-05T11:00:00Z"
+    }
+  }'
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "data": {
+    "updated_refs": [
+      "AGEND-2026-001"
+    ],
+    "status": "updated"
+  }
+}
+
+
+================================================================================
+ETAPA 5: ATUALIZAR INTEGRAÇÃO DE SEGURANÇA DO MOTORISTA (OPCIONAL)
+================================================================================
+Método: POST
+URL: http://localhost:5000/api/v1/drivers/safety-integration
+Headers:
+  Content-Type: application/json
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Atualiza ou valida diretamente a integração de segurança do motorista no terminal.
+
+Comando cURL:
+curl -X POST "http://localhost:5000/api/v1/drivers/safety-integration" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "tax_id": "12345678901",
+    "active": true,
+    "watched_at": "2026-08-01T10:00:00Z",
+    "expires_at": "2027-08-01T23:59:59Z"
+  }'
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "message": "Status de integração atualizado com sucesso"
+}
+
+
+================================================================================
+ETAPA 6: CONSULTAR LOGS E STATUS DO AGENDAMENTO
+================================================================================
+Método: GET
+URL: http://localhost:5000/api/v1/appointments/logs?refs=AGEND-2026-001
+Headers:
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Retorna o perfil do motorista vinculado, dados atuais do agendamento e o histórico
+completo de eventos/auditoria.
+
+Comando cURL:
+curl -X GET "http://localhost:5000/api/v1/appointments/logs?refs=AGEND-2026-001" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..."
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "data": [
+    {
+      "ref": "AGEND-2026-001",
+      "found": true,
+      "data": {
+        "appointment": {
+          "id": "...",
+          "ref": "AGEND-2026-001",
+          "user_tax_id": "12345678901",
+          "status": "ACTIVE",
+          "summary": "Agendamento Atualizado - Carga de Grãos Gate 02",
+          "license_plate": "XYZ9E87",
+          "window_start": "2026-08-05T09:00:00:00Z",
+          "window_end": "2026-08-05T11:00:00:00Z"
+        },
+        "driver": {
+          "tax_id": "12345678901",
+          "driver_license_number": "12345678900",
+          "driver_license_category": "E"
+        },
+        "logs": [
+          { "event": "UPDATED", "created_at": "..." },
+          { "event": "CREATED", "created_at": "..." }
+        ]
+      }
+    }
+  ]
+}
+
+
+================================================================================
+ETAPA 7: PING DE ATIVIDADE DO AGENDAMENTO PELO TERMINAL
+================================================================================
+Método: POST
+URL: http://localhost:5000/api/v1/appointments/ping
+Headers:
+  Content-Type: application/json
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Evita que o agendamento seja desativado por inatividade renovando a janela de 2 horas.
+
+Comando cURL:
+curl -X POST "http://localhost:5000/api/v1/appointments/ping" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "appointment_refs": [
+      "AGEND-2026-001"
+    ]
+  }'
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "data": {
+    "pinged_count": 1,
+    "pinged_refs": [
+      "AGEND-2026-001"
+    ],
+    "pinged_at": "2026-08-02T16:20:00.000000+00:00"
+  }
+}
+
+
+================================================================================
+ETAPA 8: CANCELAR / EXCLUIR AGENDAMENTO
+================================================================================
+Método: DELETE
+URL: http://localhost:5000/api/v1/appointments
+Headers:
+  Content-Type: application/json
+  X-API-Key: sk_live_porto_sul_abc123xyz...
+
+Descrição:
+Marca um agendamento como cancelado (`DELETED`).
+
+Comando cURL:
+curl -X DELETE "http://localhost:5000/api/v1/appointments" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '[
+    "AGEND-2026-001"
+  ]'
+
+Resposta Sucesso (200 OK):
+{
+  "success": true,
+  "data": {
+    "deleted_count": 1,
+    "status": "deleted"
+  }
+}
+
+
+================================================================================
+ETAPA 9 (OPCIONAL): FLUXO PARALELO PARA TRANSPORTADORAS (VIAGENS/TRIPS)
+================================================================================
+Caso a empresa cadastrada na Etapa 1 seja uma Transportadora (`trucking_company`),
+o fluxo utiliza os endpoints de **Trips**:
+
+1. Criar Viagem + Motorista Novo:
+curl -X POST "http://localhost:5000/api/v1/trips" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "driver": {
+      "tax_id": "12345678901",
+      "driver_license_number": "12345678900",
+      "license_category": "E"
+    },
+    "trip": {
+      "ref": "VIAGEM-2026-001",
+      "layout_ref": "LAYOUT-VIAGEM",
+      "license_plate": "ABC1D23",
+      "summary": "Frete SP -> SC",
+      "origin_city": "São Paulo",
+      "origin_state": "SP",
+      "destiny_city": "Itajaí",
+      "destiny_state": "SC"
+    }
+  }'
+
+2. Alterar Viagem:
+curl -X PUT "http://localhost:5000/api/v1/trips" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '{
+    "ref": "VIAGEM-2026-001",
+    "trip": {
+      "summary": "Frete SP -> SC (Placa Atualizada)",
+      "license_plate": "XYZ9E87"
+    }
+  }'
+
+3. Consultar Logs da Viagem:
+curl -X GET "http://localhost:5000/api/v1/trips/logs?refs=VIAGEM-2026-001" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..."
+
+4. Cancelar Viagem:
+curl -X DELETE "http://localhost:5000/api/v1/trips" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_porto_sul_abc123xyz..." \
+  -d '[
+    "VIAGEM-2026-001"
+  ]'
+
+
+================================================================================
+ETAPA 10: CONSULTA DE LOGS VIA SUPER ADMIN (GERENCIAL)
+================================================================================
+Método: GET
+URL: http://localhost:5000/api/admin/appointments/logs?company_id=9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d&refs=AGEND-2026-001
+Headers:
+  X-Super-Admin-Token: 1234
+
+Descrição:
+Permite que administradores do sistema (Super Admin) consultem o histórico completo
+de auditoria de agendamentos de qualquer empresa cadastrada.
+
+Comando cURL:
+curl -X GET "http://localhost:5000/api/admin/appointments/logs?company_id=9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d&refs=AGEND-2026-001" \
+  -H "X-Super-Admin-Token: 1234"
+
+================================================================================

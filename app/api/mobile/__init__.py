@@ -8,6 +8,7 @@ from app.api.mobile.companies import router as mobile_companies_router
 from app.api.mobile.checkin import router as mobile_checkin_router
 from app.api.mobile.announcements import router as mobile_announcements_router
 from app.api.mobile.notifications import router as mobile_notifications_router
+from app.api.mobile.submissions import router as mobile_submissions_router
 
 router = APIRouter(prefix="/api/mobile")
 
@@ -19,3 +20,4 @@ router.include_router(mobile_companies_router, tags=["Mobile Companies"])
 router.include_router(mobile_checkin_router, prefix="/checkin", tags=["Websocket & Checkin"])
 router.include_router(mobile_announcements_router, tags=["Mobile Announcements"])
 router.include_router(mobile_notifications_router, tags=["Mobile Notifications"])
+router.include_router(mobile_submissions_router, tags=["Mobile Submissions"])

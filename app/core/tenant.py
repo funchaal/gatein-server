@@ -57,11 +57,11 @@ current_company_id_ctx: ContextVar[Optional[str]] = ContextVar(
 )
 
 
-# ─── Event Listener (HOMOLOGATION ONLY) ───────────────────────────────────────
+# ─── Event Listener (STAGING / DEV / HOMOLOGATION) ───────────────────────────
 
-if settings.is_homologation:
+if not settings.is_production:
     logger.warning(
-        "[HOMOLOGATION] Isolamento multi-tenant via ORM ATIVADO. "
+        "[STAGING/DEV] Isolamento multi-tenant via ORM ATIVADO. "
         "Todas as queries em modelos com TenantModelMixin serão "
         "automaticamente filtradas por company_id."
     )
