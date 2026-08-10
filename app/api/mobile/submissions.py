@@ -350,7 +350,11 @@ def update_submission(
             )
 
     # Handle attachments delta: identify removed attachments and delete them from R2
-    old_urls = {att.get("url") for att in (sub.attachments or []) if att.get("url")}
+    old_urls = {
+        (att.get("url") if isinstance(att, dict) else getattr(att, "url", None))
+        for att in (sub.attachments or [])
+    }
+    old_urls = {u for u in old_urls if u}
     new_urls = {att.url for att in payload.attachments if att.url}
 
     removed_urls = old_urls - new_urls
@@ -403,7 +407,7 @@ def cancel_submission(
 
     # Delete all attachments from Cloudflare R2
     for att in (sub.attachments or []):
-        url = att.get("url")
+        url = att.get("url") if isinstance(att, dict) else getattr(att, "url", None)
         if url:
             try:
                 delete_r2_image(url)
