@@ -16,7 +16,8 @@ router = APIRouter()
 class LayoutUpsertRequest(BaseModel):
     """Schema representing layout creation or update payload parameters."""
     ref: str = Field(..., description="Referência única do layout")
-    layout: Optional[Any] = Field(None, description="JSON contendo a estrutura do layout")
+    layout: Optional[Any] = Field(None, description="JSON contendo a estrutura do layout (array de elementos)")
+    elements: Optional[Any] = Field(None, description="Suporte para elementos diretos")
     layout_data: Optional[Any] = Field(None, description="Suporte legado para layout_data")
     title: Optional[str] = None
 
@@ -140,9 +141,14 @@ def upsert_ticket_layout(
     """
     Saves layout details to the database (performs an UPDATE or INSERT action depending on existence).
     """
-    target_layout = body.layout if body.layout is not None else body.layout_data
+    raw_layout = body.layout if body.layout is not None else (body.elements if body.elements is not None else body.layout_data)
+    if isinstance(raw_layout, dict) and "elements" in raw_layout:
+        target_layout = raw_layout["elements"]
+    else:
+        target_layout = raw_layout
+
     if target_layout is None:
-        raise HTTPException(status_code=400, detail={"code": "BAD_REQUEST", "message": "O campo 'layout' é obrigatório."})
+        raise HTTPException(status_code=400, detail={"code": "BAD_REQUEST", "message": "Estrutura do layout é obrigatória."})
 
     layout_obj = db.query(TicketLayout).filter_by(
         terminal_id=current_user.company_id,
