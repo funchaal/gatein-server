@@ -16,7 +16,8 @@ router = APIRouter()
 class LayoutUpsertRequest(BaseModel):
     """Schema representing layout creation or update payload parameters."""
     ref: str = Field(..., description="Referência única do layout")
-    layout_data: Any = Field(..., description="JSON contendo a estrutura do layout")
+    layout: Optional[Any] = Field(None, description="JSON contendo a estrutura do layout")
+    layout_data: Optional[Any] = Field(None, description="Suporte legado para layout_data")
     title: Optional[str] = None
 
 
@@ -139,6 +140,10 @@ def upsert_trip_layout(
     """
     Saves layout details to the database (performs an UPDATE or INSERT action depending on existence).
     """
+    target_layout = body.layout if body.layout is not None else body.layout_data
+    if target_layout is None:
+        raise HTTPException(status_code=400, detail={"code": "BAD_REQUEST", "message": "O campo 'layout' é obrigatório."})
+
     layout_obj = db.query(TripLayout).filter_by(
         trucking_company_id=current_user.company_id,
         ref=body.ref
@@ -146,7 +151,7 @@ def upsert_trip_layout(
 
     try:
         if layout_obj:
-            layout_obj.layout = body.layout_data
+            layout_obj.layout = target_layout
             if body.title is not None:
                 layout_obj.title = body.title
             action = "updated"
@@ -155,7 +160,7 @@ def upsert_trip_layout(
                 trucking_company_id=current_user.company_id,
                 ref=body.ref,
                 title=body.title or body.ref,
-                layout=body.layout_data,
+                layout=target_layout,
             )
             db.add(layout_obj)
             action = "created"

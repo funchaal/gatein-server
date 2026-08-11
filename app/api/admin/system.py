@@ -208,7 +208,7 @@ def bootstrap_company(
 
     # 2. Verifica se o username do admin já existe
     if db.query(CompanyUser).filter_by(username=body.admin_user.username).first():
-        raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "O username do administrador já está em uso."})
+        raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "O username do administrador já está em uso"})
 
     try:
         # 3. Gera a API Key inicial
@@ -632,4 +632,4 @@ def get_admin_trips_logs(
             }
         })
 
-    return {"success": True, "data": result}
+    return {"success": True, "data": result}

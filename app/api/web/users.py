@@ -90,7 +90,7 @@ def create_user(
             status_code=409, 
             detail={
                 "code": "USERNAME_EXISTS", 
-                "message": "Este nome de usuário já está em uso."
+                "message": "Este nome de usuário já está em uso"
             }
         )
 
@@ -147,7 +147,7 @@ def update_user(
                 status_code=409, 
                 detail={
                     "code": "USERNAME_EXISTS", 
-                    "message": "Este nome de usuário já está em uso."
+                    "message": "Este nome de usuário já está em uso"
                 }
             )
 
