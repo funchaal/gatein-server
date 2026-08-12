@@ -370,7 +370,7 @@ def upgrade() -> None:
     sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
     sa.Column('company_id', sa.BigInteger(), nullable=False),
     sa.Column('trip_id', sa.BigInteger(), nullable=False),
-    sa.Column('event', sa.Enum('CREATED', 'UPDATED', 'DELETED', 'VIEWED', 'CLICKED', name='trip_event'), nullable=False),
+    sa.Column('event', sa.Enum('CREATED', 'UPDATED', 'DELETED', 'NOTIFICATION_SENT', 'AUTO_DEACTIVATED', 'VIEWED', 'CLICKED', name='trip_event'), nullable=False),
     sa.Column('message', sa.Text(), nullable=True),
     sa.Column('json', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),

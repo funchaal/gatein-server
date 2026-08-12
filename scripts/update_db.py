@@ -54,8 +54,8 @@ def migrate_and_update():
             conn.execute(text(query))
             
     enum_queries = [
-        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'notification_sent';",
-        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'auto_deactivated';"
+        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'NOTIFICATION_SENT';",
+        "ALTER TYPE trip_event ADD VALUE IF NOT EXISTS 'AUTO_DEACTIVATED';"
     ]
     for eq in enum_queries:
         try:
