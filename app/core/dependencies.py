@@ -94,6 +94,12 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail={"code": "USER_NOT_FOUND"})
 
+    company_id = payload.get("company_id")
+    if company_id:
+        current_company_id_ctx.set(str(company_id))
+    else:
+        current_company_id_ctx.set(None)
+
     return user
 
 

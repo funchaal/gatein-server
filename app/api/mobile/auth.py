@@ -91,8 +91,11 @@ def get_test_company_location(db: Session, user: User, matched_staging: Optional
     if not settings.should_use_staging_logic:
         return None
     
+    company_id = current_company_id_ctx.get()
     terminal = None
-    if matched_staging:
+    if company_id:
+        terminal = db.query(Terminal).filter_by(id=company_id).first()
+    if not terminal and matched_staging:
         terminal = db.query(Terminal).filter_by(id=matched_staging.company_id).first()
     if not terminal:
         app_record = db.query(Appointment).filter_by(user_tax_id=user.tax_id).first()
@@ -291,8 +294,17 @@ def login(body: MobileLoginRequest, db: Session = Depends(get_db)):
     if user.validated_device != body.device and not is_staging_password:
         raise HTTPException(status_code=403, detail={"code": "DEVICE_NOT_VALIDATED"})
 
+    token_payload = {
+        "sub": str(user.id),
+        "tax_id": user.tax_id,
+        "device_id": body.device,
+    }
+    if matched_staging_record and matched_staging_record.company_id:
+        token_payload["company_id"] = str(matched_staging_record.company_id)
+        token_payload["staging"] = True
+
     token = generate_jwt(
-        {"sub": str(user.id), "tax_id": user.tax_id, "device_id": body.device},
+        token_payload,
         exp_delta=settings.JWT_EXPIRATION_DELTA_MOBILE
     )
     company_location = get_test_company_location(db, user, matched_staging_record)
